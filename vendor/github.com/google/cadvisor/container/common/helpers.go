@@ -34,6 +34,7 @@ import (
 	"github.com/google/cadvisor/utils"
 
 	"k8s.io/klog/v2"
+	robinfs "github.com/robin/fsstats"
 )
 
 func DebugInfo(watches map[string][]string) map[string][]string {
@@ -73,7 +74,7 @@ func getSpecInternal(cgroupPaths map[string]string, machineInfoFactory info.Mach
 	now := time.Now()
 	lowestTime := now
 	for _, cgroupPathDir := range cgroupPaths {
-		dir, err := os.Stat(cgroupPathDir)
+		dir, err := robinfs.Stat(cgroupPathDir)
 		if err == nil && dir.ModTime().Before(lowestTime) {
 			lowestTime = dir.ModTime()
 		}
