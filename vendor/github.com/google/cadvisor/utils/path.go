@@ -14,10 +14,10 @@
 
 package utils
 
-import "os"
+import robinfs "github.com/robin/fsstats"
 
 func FileExists(file string) bool {
-	if _, err := os.Stat(file); err != nil {
+	if _, err := robinfs.Stat(file); err != nil {
 		return false
 	}
 	return true

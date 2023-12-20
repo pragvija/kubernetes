@@ -37,6 +37,7 @@ import (
 	"github.com/google/cadvisor/utils"
 
 	"k8s.io/klog/v2"
+	robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -417,6 +418,11 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				if v, ok := nfsInfo[devId]; ok {
 					fs = v
 					break
+				}
+				// we set err here so utils.FileExists fails due to stuck filesystem,
+				// error is set for the mountpoint.
+				if robinfs.FileSystemHung(partition.mountpoint, 3) {
+					err = fmt.Errorf("File system hung.")
 				}
 				var inodes, inodesFree uint64
 				fs.Capacity, fs.Free, fs.Available, inodes, inodesFree, err = getVfsStats(partition.mountpoint)

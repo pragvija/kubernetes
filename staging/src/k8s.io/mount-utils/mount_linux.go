@@ -36,6 +36,7 @@ import (
 
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
+	robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -393,11 +394,11 @@ func (*Mounter) List() ([]MountPoint, error) {
 // will return true. When in fact /tmp/b is a mount point. If this situation
 // is of interest to you, don't use this function...
 func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
-	stat, err := os.Stat(file)
+	stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
 	}
-	rootStat, err := os.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
+	rootStat, err := robinfs.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
 	if err != nil {
 		return true, err
 	}
