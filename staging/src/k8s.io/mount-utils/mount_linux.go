@@ -747,7 +747,7 @@ func SearchMountPoints(hostSource, mountInfoPath string) ([]string, error) {
 // endpoint is called to enumerate all the mountpoints and check if
 // it is mountpoint match or not.
 func (mounter *Mounter) IsMountPoint(file string) (bool, error) {
-	isMnt, sure, isMntErr := mountinfo.MountedFast(file)
+	isMnt, sure, isMntErr := robinfs.MountedFast(file)
 	if sure && isMntErr == nil {
 		return isMnt, nil
 	}
