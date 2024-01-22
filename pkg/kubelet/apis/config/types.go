@@ -465,6 +465,9 @@ type KubeletConfiguration struct {
 	// disabled. Once disabled, user should not set request/limit for container's ephemeral storage, or sizeLimit for emptyDir.
 	// +optional
 	LocalStorageCapacityIsolation bool
+
+	// StatTimeout is the timeout for a stat call on a file.
+	StatTimeout int32
 }
 
 // KubeletAuthorizationMode denotes the authorization mode for the kubelet
