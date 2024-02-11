@@ -803,6 +803,8 @@ type KubeletConfiguration struct {
 	// Default: true
 	// +optional
 	LocalStorageCapacityIsolation *bool `json:"localStorageCapacityIsolation,omitempty"`
+
+	StatTimeout *int32 `json:"statTimeout,omitempty"`
 }
 
 type KubeletAuthorizationMode string
