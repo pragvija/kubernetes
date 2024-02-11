@@ -7,12 +7,32 @@ import (
     "fmt"
     "github.com/moby/sys/mountinfo"
     "os/exec"
+    "strings"
+    "strconv"
 )
+
+type StatTimeoutOptions struct {
+    Timeout int
+    // Path string
+}
 
 func Stat(filePath string) (os.FileInfo, error) {
     // Defaulting to 3 secs for now.
-    // TODO : Get this value as input param to kubelet (FS_STAT_TIMEOUT).
-    if !FileSystemHung(filePath, 3) {
+    var obj *StatTimeoutOptions
+    if obj == nil {
+        // Kind of like a state storage mechanism to stop parsing everytime
+        var stat_timeout int
+        for index, arg := range os.Args[1:] {
+		    if strings.HasPrefix(arg, "--stat-timeout=") {
+			    stat_timeout, _ = strconv.Atoi(os.Args[index + 1])
+		    }
+	    }
+		obj = &StatTimeoutOptions{
+			Timeout: stat_timeout,
+		}
+	}
+    
+    if !FileSystemHung(filePath, obj.Timeout) {
         // Redundant stat call here else we get into problems of ipc and output parsing.
         return os.Stat(filePath)
     }
