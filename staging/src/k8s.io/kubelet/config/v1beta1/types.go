@@ -830,6 +830,7 @@ type KubeletConfiguration struct {
 	// If not specified, the value in containerRuntimeEndpoint is used.
 	// +optional
 	ImageServiceEndpoint string `json:"imageServiceEndpoint,omitempty"`
+	StatTimeout *int32 `json:"statTimeout,omitempty"`
 }
 
 type KubeletAuthorizationMode string
