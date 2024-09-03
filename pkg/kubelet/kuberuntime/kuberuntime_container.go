@@ -57,6 +57,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	"k8s.io/kubernetes/pkg/util/tail"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
+        robinfs "github.com/robin/fsstats"
 )
 
 var (
@@ -134,7 +135,7 @@ func (s *startSpec) getTargetID(podStatus *kubecontainer.PodStatus) (*kubecontai
 
 func calcRestartCountByLogDir(path string) (int, error) {
 	// if the path doesn't exist then it's not an error
-	if _, err := os.Stat(path); err != nil {
+	if _, err := robinfs.Stat(path); err != nil {
 		return 0, nil
 	}
 	files, err := os.ReadDir(path)

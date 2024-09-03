@@ -41,6 +41,7 @@ import (
 	"github.com/google/cadvisor/utils/sysfs"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
+        robinfs "github.com/robin/fsstats"
 )
 
 type cadvisorClient struct {
@@ -108,7 +109,7 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, cgroupRoots [
 		return nil, err
 	}
 
-	if _, err := os.Stat(rootPath); err != nil {
+	if _, err := robinfs.Stat(rootPath); err != nil {
 		if os.IsNotExist(err) {
 			if err := os.MkdirAll(path.Clean(rootPath), 0750); err != nil {
 				return nil, fmt.Errorf("error creating root directory %q: %v", rootPath, err)

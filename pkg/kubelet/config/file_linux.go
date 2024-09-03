@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/flowcontrol"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -67,7 +68,7 @@ func (s *sourceFile) startWatch() {
 }
 
 func (s *sourceFile) doWatch() error {
-	_, err := os.Stat(s.path)
+	_, err := robinfs.Stat(s.path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err

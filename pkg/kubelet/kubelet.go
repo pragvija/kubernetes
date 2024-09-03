@@ -123,6 +123,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 	"k8s.io/utils/clock"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -1460,7 +1461,7 @@ func (kl *Kubelet) initializeModules() error {
 	}
 
 	// If the container logs directory does not exist, create it.
-	if _, err := os.Stat(ContainerLogsDir); err != nil {
+	if _, err := robinfs.Stat(ContainerLogsDir); err != nil {
 		if err := kl.os.MkdirAll(ContainerLogsDir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %q: %v", ContainerLogsDir, err)
 		}
