@@ -12,7 +12,11 @@ import (
 func Stat(filePath string) (os.FileInfo, error) {
     // Defaulting to 3 secs for now.
     // TODO : Get this value as input param to kubelet (FS_STAT_TIMEOUT).
+<<<<<<< HEAD
     if !FileSystemHung(filePath, 2) {
+=======
+    if !FileSystemHung(filePath, 3) {
+>>>>>>> ca95eeb... add robinfs folder and utils
         // Redundant stat call here else we get into problems of ipc and output parsing.
         return os.Stat(filePath)
     }
@@ -28,7 +32,11 @@ func FileExists(file string) bool {
 
 // This is needed since cAdvisor uses moby's package to check for mountedFast.
 func MountedFast(path string) (mounted, sure bool, err error) {
+<<<<<<< HEAD
     if !FileSystemHung(path, 2) {
+=======
+    if !FileSystemHung(path, 5) {
+>>>>>>> ca95eeb... add robinfs folder and utils
         isMnt, sure, isMntErr := mountinfo.MountedFast(path)
         return isMnt, sure, isMntErr
     }
@@ -51,4 +59,7 @@ func FileSystemHung(filePath string, timeout int) bool {
     }
     return false
 }
+<<<<<<< HEAD
 
+=======
+>>>>>>> ca95eeb... add robinfs folder and utils
