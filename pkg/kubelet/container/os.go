@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+        robinfs "github.com/robin/fsstats"
 )
 
 // OSInterface collects system level operations that need to be mocked out
@@ -57,7 +58,7 @@ func (RealOS) Symlink(oldname string, newname string) error {
 
 // Stat will call os.Stat to get the FileInfo for a given path
 func (RealOS) Stat(path string) (os.FileInfo, error) {
-	return os.Stat(path)
+	return robinfs.Stat(path)
 }
 
 // Remove will call os.Remove to remove the path.

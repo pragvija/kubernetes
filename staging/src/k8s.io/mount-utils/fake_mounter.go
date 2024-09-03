@@ -17,11 +17,11 @@ limitations under the License.
 package mount
 
 import (
-	"os"
 	"path/filepath"
 	"sync"
 
 	"k8s.io/klog/v2"
+        robinfs "github.com/robin/fsstats"
 )
 
 // FakeMounter implements mount.Interface for tests.
@@ -197,7 +197,7 @@ func (f *FakeMounter) IsLikelyNotMountPoint(file string) (bool, error) {
 		return false, err
 	}
 
-	_, err = os.Stat(file)
+	_, err = robinfs.Stat(file)
 	if err != nil {
 		return true, err
 	}

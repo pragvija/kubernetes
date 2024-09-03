@@ -20,6 +20,7 @@ package fs
 
 import (
 	"bufio"
+        "context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+        "time"
 
 	zfs "github.com/mistifyio/go-zfs"
 	mount "github.com/moby/sys/mountinfo"
@@ -38,6 +40,7 @@ import (
 	"github.com/google/cadvisor/utils"
 
 	"k8s.io/klog/v2"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -142,7 +145,7 @@ func NewFsInfo(context Context) (FsInfo, error) {
 func getFsUUIDToDeviceNameMap() (map[string]string, error) {
 	const dir = "/dev/disk/by-uuid"
 
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	if _, err := robinfs.Stat(dir); os.IsNotExist(err) {
 		return make(map[string]string), nil
 	}
 
@@ -401,7 +404,7 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				klog.V(5).Infof("got devicemapper fs capacity stats: capacity: %v free: %v available: %v:", fs.Capacity, fs.Free, fs.Available)
 				fs.Type = DeviceMapper
 			case ZFS.String():
-				if _, devzfs := os.Stat("/dev/zfs"); os.IsExist(devzfs) {
+				if _, devzfs := robinfs.Stat("/dev/zfs"); os.IsExist(devzfs) {
 					fs.Capacity, fs.Free, fs.Available, err = getZfstats(device)
 					fs.Type = ZFS
 					break
@@ -609,7 +612,7 @@ func GetDirUsage(dir string) (UsageInfo, error) {
 		return usage, fmt.Errorf("invalid directory")
 	}
 
-	rootInfo, err := os.Stat(dir)
+	rootInfo, err := robinfs.Stat(dir)
 	if err != nil {
 		return usage, fmt.Errorf("could not stat %q to get inode usage: %v", dir, err)
 	}
@@ -672,16 +675,41 @@ func (i *RealFsInfo) GetDirUsage(dir string) (UsageInfo, error) {
 }
 
 func getVfsStats(path string) (total uint64, free uint64, avail uint64, inodes uint64, inodesFree uint64, err error) {
-	var s syscall.Statfs_t
-	if err = syscall.Statfs(path, &s); err != nil {
-		return 0, 0, 0, 0, 0, err
-	}
-	total = uint64(s.Frsize) * s.Blocks
-	free = uint64(s.Frsize) * s.Bfree
-	avail = uint64(s.Frsize) * s.Bavail
-	inodes = uint64(s.Files)
-	inodesFree = uint64(s.Ffree)
-	return total, free, avail, inodes, inodesFree, nil
+    // timeout the context with, default is 2sec
+    timeout := 2
+    ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+    defer cancel()
+
+    type result struct {
+        total      uint64
+        free       uint64
+        avail      uint64
+        inodes     uint64
+        inodesFree uint64
+        err        error
+    }
+
+    resultChan := make(chan result, 1)
+
+    go func() {
+        var s syscall.Statfs_t
+        if err = syscall.Statfs(path, &s); err != nil {
+            total, free, avail, inodes, inodesFree = 0, 0, 0, 0, 0
+        }
+        total = uint64(s.Frsize) * s.Blocks
+        free = uint64(s.Frsize) * s.Bfree
+        avail = uint64(s.Frsize) * s.Bavail
+        inodes = uint64(s.Files)
+        inodesFree = uint64(s.Ffree)
+        resultChan <- result{total: total, free: free, avail: avail, inodes: inodes, inodesFree: inodesFree, err: err}
+    }()
+
+    select {
+    case <-ctx.Done():
+        return 0, 0, 0, 0, 0, ctx.Err()
+    case res := <-resultChan:
+        return res.total, res.free, res.avail, res.inodes, res.inodesFree, res.err
+    }
 }
 
 // Devicemapper thin provisioning is detailed at
