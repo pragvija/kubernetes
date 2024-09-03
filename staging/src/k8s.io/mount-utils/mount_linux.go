@@ -32,12 +32,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moby/sys/mountinfo"
 	"golang.org/x/sys/unix"
 
 	libcontaineruserns "github.com/opencontainers/runc/libcontainer/userns"
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -451,11 +451,11 @@ func statx(file string) (unix.Statx_t, error) {
 }
 
 func (mounter *Mounter) isLikelyNotMountPointStat(file string) (bool, error) {
-	stat, err := os.Stat(file)
+	stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
 	}
-	rootStat, err := os.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
+	rootStat, err := robinfs.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
 	if err != nil {
 		return true, err
 	}
@@ -849,7 +849,7 @@ func SearchMountPoints(hostSource, mountInfoPath string) ([]string, error) {
 // endpoint is called to enumerate all the mountpoints and check if
 // it is mountpoint match or not.
 func (mounter *Mounter) IsMountPoint(file string) (bool, error) {
-	isMnt, sure, isMntErr := mountinfo.MountedFast(file)
+	isMnt, sure, isMntErr := robinfs.MountedFast(file)
 	if sure && isMntErr == nil {
 		return isMnt, nil
 	}

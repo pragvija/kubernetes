@@ -33,6 +33,7 @@ import (
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 	utilio "k8s.io/utils/io"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -188,7 +189,7 @@ func isMountPointMatch(mp MountPoint, dir string) bool {
 // PathExists returns true if the specified path exists.
 // TODO: clean this up to use pkg/util/file/FileExists
 func PathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
+	_, err := robinfs.Stat(path)
 	if err == nil {
 		return true, nil
 	} else if errors.Is(err, fs.ErrNotExist) {
