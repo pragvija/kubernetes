@@ -32,6 +32,7 @@ import (
 	api "k8s.io/kubernetes/pkg/apis/core"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	utilio "k8s.io/utils/io"
+        robinfs "github.com/robin/fsstats"
 )
 
 type podEventType int
@@ -120,7 +121,7 @@ func (s *sourceFile) applyDefaults(pod *api.Pod, source string) error {
 
 func (s *sourceFile) listConfig() error {
 	path := s.path
-	statInfo, err := os.Stat(path)
+	statInfo, err := robinfs.Stat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -171,7 +172,7 @@ func (s *sourceFile) extractFromDir(name string) ([]*v1.Pod, error) {
 
 	sort.Strings(dirents)
 	for _, path := range dirents {
-		statInfo, err := os.Stat(path)
+		statInfo, err := robinfs.Stat(path)
 		if err != nil {
 			klog.ErrorS(err, "Could not get metadata", "path", path)
 			continue
