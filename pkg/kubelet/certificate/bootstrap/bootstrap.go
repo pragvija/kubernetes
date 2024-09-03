@@ -46,6 +46,7 @@ import (
 	"k8s.io/client-go/util/certificate"
 	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/client-go/util/keyutil"
+        robinfs "github.com/robin/fsstats"
 )
 
 const tmpPrivateKeyFile = "kubelet-client.key.tmp"
@@ -229,7 +230,7 @@ func loadRESTClientConfig(kubeconfig string) (*restclient.Config, error) {
 // client certificate. It returns true if the kubeconfig is valid, or an error if bootstrapping
 // should stop immediately.
 func isClientConfigStillValid(kubeconfigPath string) (bool, error) {
-	_, err := os.Stat(kubeconfigPath)
+	_, err := robinfs.Stat(kubeconfigPath)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
