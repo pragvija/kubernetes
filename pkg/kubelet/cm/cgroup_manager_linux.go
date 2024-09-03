@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	cmutil "k8s.io/kubernetes/pkg/kubelet/cm/util"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -488,7 +489,7 @@ func (m *cgroupManagerImpl) Pids(name CgroupName) []int {
 	var pids []int
 	for _, val := range m.subsystems.MountPoints {
 		dir := path.Join(val, cgroupFsName)
-		_, err := os.Stat(dir)
+		_, err := robinfs.Stat(dir)
 		if os.IsNotExist(err) {
 			// The subsystem pod cgroup is already deleted
 			// do nothing, continue

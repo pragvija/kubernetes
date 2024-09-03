@@ -33,11 +33,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moby/sys/mountinfo"
-
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
 	utilio "k8s.io/utils/io"
+	"golang.org/x/sys/unix"
+
+	robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -387,6 +388,19 @@ func (*Mounter) List() ([]MountPoint, error) {
 	return ListProcMounts(procMountsPath)
 }
 
+func statx(file string) (unix.Statx_t, error) {
+	var stat unix.Statx_t
+	if err := unix.Statx(0, file, unix.AT_STATX_DONT_SYNC, 0, &stat); err != nil {
+		if err == unix.ENOSYS {
+			return stat, errStatxNotSupport
+		}
+
+		return stat, err
+	}
+
+	return stat, nil
+}
+
 // IsLikelyNotMountPoint determines if a directory is not a mountpoint.
 // It is fast but not necessarily ALWAYS correct. If the path is in fact
 // a bind mount from one part of a mount to another it will not be detected.
@@ -394,12 +408,12 @@ func (*Mounter) List() ([]MountPoint, error) {
 // mkdir /tmp/a /tmp/b; mount --bind /tmp/a /tmp/b; IsLikelyNotMountPoint("/tmp/b")
 // will return true. When in fact /tmp/b is a mount point. If this situation
 // is of interest to you, don't use this function...
-func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
-	stat, err := os.Stat(file)
+func (mounter *Mounter) isLikelyNotMountPointStat(file string) (bool, error) {
+	stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
 	}
-	rootStat, err := os.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
+	rootStat, err := robinfs.Stat(filepath.Dir(strings.TrimSuffix(file, "/")))
 	if err != nil {
 		return true, err
 	}
@@ -409,6 +423,10 @@ func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (mounter *Mounter) isLikelyNotMountPoint(file string) (bool, error) {
+	return mounter.isLikelyNotMountPointStat(file)
 }
 
 // CanSafelySkipMountPointCheck relies on the detected behavior of umount when given a target that is not a mount point.
@@ -748,7 +766,7 @@ func SearchMountPoints(hostSource, mountInfoPath string) ([]string, error) {
 // endpoint is called to enumerate all the mountpoints and check if
 // it is mountpoint match or not.
 func (mounter *Mounter) IsMountPoint(file string) (bool, error) {
-	isMnt, sure, isMntErr := mountinfo.MountedFast(file)
+	isMnt, sure, isMntErr := robinfs.MountedFast(file)
 	if sure && isMntErr == nil {
 		return isMnt, nil
 	}

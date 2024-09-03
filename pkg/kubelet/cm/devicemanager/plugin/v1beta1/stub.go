@@ -31,6 +31,7 @@ import (
 	"k8s.io/klog/v2"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 	watcherapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
+        robinfs "github.com/robin/fsstats"
 )
 
 // Stub implementation for DevicePlugin.
@@ -183,7 +184,7 @@ func (m *Stub) NotifyRegistrationStatus(ctx context.Context, status *watcherapi.
 // Register registers the device plugin for the given resourceName with Kubelet.
 func (m *Stub) Register(kubeletEndpoint, resourceName string, pluginSockDir string) error {
 	if pluginSockDir != "" {
-		if _, err := os.Stat(pluginSockDir + "DEPRECATION"); err == nil {
+		if _, err := robinfs.Stat(pluginSockDir + "DEPRECATION"); err == nil {
 			klog.InfoS("Deprecation file found. Skip registration")
 			return nil
 		}
