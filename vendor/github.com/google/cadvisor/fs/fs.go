@@ -39,6 +39,7 @@ import (
 	"github.com/google/cadvisor/utils"
 
 	"k8s.io/klog/v2"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -144,7 +145,7 @@ func NewFsInfo(context Context) (FsInfo, error) {
 func getFsUUIDToDeviceNameMap() (map[string]string, error) {
 	const dir = "/dev/disk/by-uuid"
 
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	if _, err := robinfs.Stat(dir); os.IsNotExist(err) {
 		return make(map[string]string), nil
 	}
 
@@ -431,7 +432,7 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				klog.V(5).Infof("got devicemapper fs capacity stats: capacity: %v free: %v available: %v:", fs.Capacity, fs.Free, fs.Available)
 				fs.Type = DeviceMapper
 			case ZFS.String():
-				if _, devzfs := os.Stat("/dev/zfs"); os.IsExist(devzfs) {
+				if _, devzfs := robinfs.Stat("/dev/zfs"); os.IsExist(devzfs) {
 					fs.Capacity, fs.Free, fs.Available, err = getZfstats(device)
 					fs.Type = ZFS
 					break
@@ -655,7 +656,7 @@ func GetDirUsage(dir string) (UsageInfo, error) {
 		return usage, fmt.Errorf("invalid directory")
 	}
 
-	rootInfo, err := os.Stat(dir)
+	rootInfo, err := robinfs.Stat(dir)
 	if err != nil {
 		return usage, fmt.Errorf("could not stat %q to get inode usage: %v", dir, err)
 	}
