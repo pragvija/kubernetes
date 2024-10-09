@@ -36,7 +36,6 @@ import (
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
 	utilio "k8s.io/utils/io"
-	"golang.org/x/sys/unix"
 
 	robinfs "github.com/robin/fsstats"
 )
@@ -395,7 +394,7 @@ func (*Mounter) List() ([]MountPoint, error) {
 // mkdir /tmp/a /tmp/b; mount --bind /tmp/a /tmp/b; IsLikelyNotMountPoint("/tmp/b")
 // will return true. When in fact /tmp/b is a mount point. If this situation
 // is of interest to you, don't use this function...
-func (mounter *Mounter) isLikelyNotMountPoint(file string) (bool, error) {
+func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
 	stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
