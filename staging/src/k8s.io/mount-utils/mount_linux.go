@@ -384,7 +384,7 @@ func (*Mounter) List() ([]MountPoint, error) {
 	return ListProcMounts(procMountsPath)
 }
 
-func (mounter *Mounter) IsLikelyNotMountPointStat(file string) (bool, error) {
+func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
 	stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
