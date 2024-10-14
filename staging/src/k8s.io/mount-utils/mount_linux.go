@@ -32,8 +32,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moby/sys/mountinfo"
-
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
 	robinfs "github.com/robin/fsstats"

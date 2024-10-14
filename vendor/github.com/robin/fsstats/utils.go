@@ -21,7 +21,7 @@ func Stat(filePath string) (os.FileInfo, error) {
     var obj *StatTimeoutOptions
     if obj == nil {
         // Kind of like a state storage mechanism to stop parsing everytime
-        var stat_timeout int
+        var stat_timeout int = 2
         for index, arg := range os.Args[1:] {
 		    if strings.HasPrefix(arg, "--stat-timeout=") {
 			    stat_timeout, _ = strconv.Atoi(os.Args[index + 1])
