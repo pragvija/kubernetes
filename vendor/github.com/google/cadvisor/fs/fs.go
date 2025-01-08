@@ -445,6 +445,13 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 					fs = v
 					break
 				}
+                                if robinfs.FileSystemHung(partition.mountpoint, 3) {
+                    			err = fmt.Errorf("File system hung.")
+                		}
+                		if err != nil {
+                    			klog.V(4).Infof("the file system is hung")
+                    			break
+                		}
 				var inodes, inodesFree uint64
 				fs.Capacity, fs.Free, fs.Available, inodes, inodesFree, err = getVfsStats(partition.mountpoint)
 				if err != nil {
