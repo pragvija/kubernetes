@@ -12,7 +12,7 @@ import (
 func Stat(filePath string) (os.FileInfo, error) {
     // Defaulting to 3 secs for now.
     // TODO : Get this value as input param to kubelet (FS_STAT_TIMEOUT).
-    if !FileSystemHung(filePath, 3) {
+    if !FileSystemHung(filePath, 2) {
         // Redundant stat call here else we get into problems of ipc and output parsing.
         return os.Stat(filePath)
     }
@@ -28,7 +28,7 @@ func FileExists(file string) bool {
 
 // This is needed since cAdvisor uses moby's package to check for mountedFast.
 func MountedFast(path string) (mounted, sure bool, err error) {
-    if !FileSystemHung(path, 5) {
+    if !FileSystemHung(path, 2) {
         isMnt, sure, isMntErr := mountinfo.MountedFast(path)
         return isMnt, sure, isMntErr
     }
