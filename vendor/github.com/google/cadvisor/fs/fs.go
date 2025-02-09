@@ -726,7 +726,6 @@ func (i *RealFsInfo) GetDirUsage(dir string) (UsageInfo, error) {
 }
 
 func getVfsStats(path string) (total uint64, free uint64, avail uint64, inodes uint64, inodesFree uint64, err error) {
-<<<<<<< HEAD
 	// timeout the context with, default is 2sec
 	timeout := 2
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
