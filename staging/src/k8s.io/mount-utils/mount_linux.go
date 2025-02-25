@@ -23,7 +23,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/moby/sys/mountinfo"
 	"io/fs"
 	"io/ioutil"
 	"os"
@@ -408,20 +407,7 @@ func (*Mounter) List() ([]MountPoint, error) {
 // mkdir /tmp/a /tmp/b; mount --bind /tmp/a /tmp/b; IsLikelyNotMountPoint("/tmp/b")
 // will return true. When in fact /tmp/b is a mount point. If this situation
 // is of interest to you, don't use this function...
-func statx(file string) (unix.Statx_t, error) {
-	var stat unix.Statx_t
-	if err := unix.Statx(unix.AT_FDCWD, file, unix.AT_STATX_DONT_SYNC, 0, &stat); err != nil {
-		if err == unix.ENOSYS {
-			return stat, errStatxNotSupport
-		}
-
-		return stat, err
-	}
-
-	return stat, nil
-}
-
-func (mounter *Mounter) isLikelyNotMountPointStat(file string) (bool, error) {
+func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
         stat, err := robinfs.Stat(file)
 	if err != nil {
 		return true, err
