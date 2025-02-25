@@ -182,6 +182,7 @@ func processMounts(mounts []*mount.Info, excludedMountpointPrefixes []string) ma
 		"tmpfs":   true,
 		"xfs":     true,
 		"zfs":     true,
+                "nfs":     true,
 	}
 
 	for _, mnt := range mounts {
@@ -304,7 +305,7 @@ func (i *RealFsInfo) addCrioImagesLabel(context Context, mounts []*mount.Info) {
 		crioImagePaths := map[string]struct{}{
 			"/": {},
 		}
-		for _, dir := range []string{"devicemapper", "btrfs", "aufs", "overlay", "zfs"} {
+		for _, dir := range []string{"devicemapper", "btrfs", "aufs", "overlay", "zfs", "nfs"} {
 			crioImagePaths[path.Join(crioPath, dir+"-images")] = struct{}{}
 		}
 		for crioPath != "/" && crioPath != "." {
@@ -325,7 +326,7 @@ func getDockerImagePaths(context Context) map[string]struct{} {
 
 	// TODO(rjnagal): Detect docker root and graphdriver directories from docker info.
 	dockerRoot := context.Docker.Root
-	for _, dir := range []string{"devicemapper", "btrfs", "aufs", "overlay", "overlay2", "zfs"} {
+	for _, dir := range []string{"devicemapper", "btrfs", "aufs", "overlay", "overlay2", "zfs", "nfs"} {
 		dockerImagePaths[path.Join(dockerRoot, dir)] = struct{}{}
 	}
 	for dockerRoot != "/" && dockerRoot != "." {
@@ -411,12 +412,7 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				}
 				// if /dev/zfs is not present default to VFS
 				fallthrough
-			case NFS.String():
-				devId := fmt.Sprintf("%d:%d", partition.major, partition.minor)
-				if v, ok := nfsInfo[devId]; ok {
-					fs = v
-					break
-				}
+			case "nfs":
                                 if robinfs.FileSystemHung(partition.mountpoint, 3) {
                     			err = fmt.Errorf("File system hung.")
                 		}
@@ -433,7 +429,6 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				fs.Inodes = &inodes
 				fs.InodesFree = &inodesFree
 				fs.Type = VFS
-				nfsInfo[devId] = fs
 			default:
 				var inodes, inodesFree uint64
 				if utils.FileExists(partition.mountpoint) {
