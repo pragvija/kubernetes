@@ -36,7 +36,6 @@ import (
 	"k8s.io/klog/v2"
 	utilexec "k8s.io/utils/exec"
 	utilio "k8s.io/utils/io"
-	"golang.org/x/sys/unix"
 
         robinfs "github.com/robin/fsstats"
 )
