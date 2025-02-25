@@ -182,7 +182,6 @@ func processMounts(mounts []*mount.Info, excludedMountpointPrefixes []string) ma
 		"tmpfs":   true,
 		"xfs":     true,
 		"zfs":     true,
-                "nfs":     true,
 	}
 
 	for _, mnt := range mounts {
@@ -399,7 +398,11 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				err error
 				fs  Fs
 			)
-			switch partition.fsType {
+                        fsType := partition.fsType
+                        if strings.HasPrefix(partition.fsType, "nfs") {
+                                fsType = "nfs"
+                        }
+			switch fsType {
 			case DeviceMapper.String():
 				fs.Capacity, fs.Free, fs.Available, err = getDMStats(device, partition.blockSize)
 				klog.V(5).Infof("got devicemapper fs capacity stats: capacity: %v free: %v available: %v:", fs.Capacity, fs.Free, fs.Available)
@@ -412,7 +415,7 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				}
 				// if /dev/zfs is not present default to VFS
 				fallthrough
-			case "nfs":
+			case NFS.String():
                                 if robinfs.FileSystemHung(partition.mountpoint, 3) {
                     			err = fmt.Errorf("File system hung.")
                 		}
