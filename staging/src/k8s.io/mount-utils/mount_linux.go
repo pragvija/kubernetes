@@ -503,7 +503,7 @@ func (mounter *Mounter) isLikelyNotMountPointStatx(file string) (bool, error) {
 // will return true. When in fact /tmp/b is a mount point. If this situation
 // is of interest to you, don't use this function...
 func (mounter *Mounter) IsLikelyNotMountPoint(file string) (bool, error) {
-	notMountPoint, err := mounter.isLikelyNotMountPointStatx(file)
+	notMountPoint, err := mounter.isLikelyNotMountPointStat(file)
 	if errors.Is(err, errStatxNotSupport) {
 		// fall back to isLikelyNotMountPointStat
 		return mounter.isLikelyNotMountPointStat(file)
