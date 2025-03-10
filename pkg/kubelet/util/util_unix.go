@@ -29,6 +29,7 @@ import (
 
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -138,7 +139,7 @@ func LocalEndpoint(path, file string) (string, error) {
 
 // IsUnixDomainSocket returns whether a given file is a AF_UNIX socket file
 func IsUnixDomainSocket(filePath string) (bool, error) {
-	fi, err := os.Stat(filePath)
+	fi, err := robinfs.Stat(filePath)
 	if err != nil {
 		return false, fmt.Errorf("stat file %s failed: %v", filePath, err)
 	}

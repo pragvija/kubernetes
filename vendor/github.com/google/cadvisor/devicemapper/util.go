@@ -16,8 +16,8 @@ package devicemapper
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+        robinfs "github.com/robin/fsstats"
 )
 
 // ThinLsBinaryPresent returns the location of the thin_ls binary in the mount
@@ -40,7 +40,7 @@ func ThinLsBinaryPresent() (string, error) {
 		// try paths for non-containerized operation
 		// note: thin_ls is most likely a symlink to pdata_tools
 		thinLsPath = filepath.Join(path, "thin_ls")
-		_, err = os.Stat(thinLsPath)
+		_, err = robinfs.Stat(thinLsPath)
 		if err == nil {
 			return thinLsPath, nil
 		}

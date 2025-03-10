@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"k8s.io/klog/v2"
+        robinfs "github.com/robin/fsstats"
 )
 
 const (
@@ -227,7 +228,7 @@ func (fs *realSysFs) GetNetworkDevices() ([]os.FileInfo, error) {
 	var dirs []os.FileInfo
 	for _, f := range files {
 		if f.Mode()|os.ModeSymlink != 0 {
-			f, err = os.Stat(path.Join(netDir, f.Name()))
+			f, err = robinfs.Stat(path.Join(netDir, f.Name()))
 			if err != nil {
 				continue
 			}
@@ -382,7 +383,7 @@ func (fs *realSysFs) IsCPUOnline(cpuPath string) bool {
 	}
 
 	// Quick check to determine if file exists: if it does not then kernel CPU hotplug is disabled and all CPUs are online.
-	_, err = os.Stat(onlinePath)
+	_, err = robinfs.Stat(onlinePath)
 	if err != nil && os.IsNotExist(err) {
 		return true
 	}

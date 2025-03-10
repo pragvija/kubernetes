@@ -28,6 +28,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/pluginmanager/cache"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 	utilfs "k8s.io/kubernetes/pkg/util/filesystem"
+        robinfs "github.com/robin/fsstats"
 )
 
 // Watcher is the plugin watcher
@@ -159,7 +160,7 @@ func (w *Watcher) traversePluginDir(dir string) error {
 func (w *Watcher) handleCreateEvent(event fsnotify.Event) error {
 	klog.V(6).InfoS("Handling create event", "event", event)
 
-	fi, err := os.Stat(event.Name)
+	fi, err := robinfs.Stat(event.Name)
 	// TODO: This is a workaround for Windows 20H2 issue for os.Stat(). Please see
 	// microsoft/Windows-Containers#97 for details.
 	// Once the issue is resvolved, the following os.Lstat() is not needed.
