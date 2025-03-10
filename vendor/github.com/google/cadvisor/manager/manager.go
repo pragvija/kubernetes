@@ -50,6 +50,7 @@ import (
 
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
+        robinfs "github.com/robin/fsstats"
 )
 
 var globalHousekeepingInterval = flag.Duration("global_housekeeping_interval", 1*time.Minute, "Interval between global housekeepings")
@@ -177,7 +178,7 @@ func New(memoryCache *memory.InMemoryCache, sysfs sysfs.SysFs, houskeepingConfig
 	// If cAdvisor was started with host's rootfs mounted, assume that its running
 	// in its own namespaces.
 	inHostNamespace := false
-	if _, err := os.Stat("/rootfs/proc"); os.IsNotExist(err) {
+	if _, err := robinfs.Stat("/rootfs/proc"); os.IsNotExist(err) {
 		inHostNamespace = true
 	}
 
