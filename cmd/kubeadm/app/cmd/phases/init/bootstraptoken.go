@@ -72,6 +72,10 @@ func runBootstrapToken(c workflow.RunData) error {
 	if err != nil {
 		return err
 	}
+	kubeconfig, err := data.KubeConfig()
+	if err != nil {
+		return err
+	}
 
 	if !data.SkipTokenPrint() {
 		tokens := data.Tokens()
@@ -88,7 +92,7 @@ func runBootstrapToken(c workflow.RunData) error {
 		return errors.Wrap(err, "error updating or creating token")
 	}
 	// Create RBAC rules that makes the bootstrap tokens able to get nodes
-	if err := nodebootstraptokenphase.AllowBoostrapTokensToGetNodes(client); err != nil {
+	if err := nodebootstraptokenphase.AllowBootstrapTokensToGetNodes(client); err != nil {
 		return errors.Wrap(err, "error allowing bootstrap tokens to get Nodes")
 	}
 	// Create RBAC rules that makes the bootstrap tokens able to post CSRs
@@ -106,7 +110,7 @@ func runBootstrapToken(c workflow.RunData) error {
 	}
 
 	// Create the cluster-info ConfigMap with the associated RBAC rules
-	if err := clusterinfophase.CreateBootstrapConfigMapIfNotExists(client, data.KubeConfigPath()); err != nil {
+	if err := clusterinfophase.CreateBootstrapConfigMapIfNotExists(client, kubeconfig); err != nil {
 		return errors.Wrap(err, "error creating bootstrap ConfigMap")
 	}
 	if err := clusterinfophase.CreateClusterInfoRBACRules(client); err != nil {

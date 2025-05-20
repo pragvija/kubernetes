@@ -27,7 +27,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/kubernetes"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc/grpclog"
 
@@ -45,6 +48,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/etcd3/testserver"
 	storagetesting "k8s.io/apiserver/pkg/storage/testing"
 	"k8s.io/apiserver/pkg/storage/value"
+	"k8s.io/klog/v2"
 )
 
 var scheme = runtime.NewScheme()
@@ -93,7 +97,7 @@ func checkStorageInvariants(etcdClient *clientv3.Client, codec runtime.Codec) st
 
 func TestCreate(t *testing.T) {
 	ctx, store, etcdClient := testSetup(t)
-	storagetesting.RunTestCreate(ctx, t, store, checkStorageInvariants(etcdClient, store.codec))
+	storagetesting.RunTestCreate(ctx, t, store, checkStorageInvariants(etcdClient.Client, store.codec))
 }
 
 func TestCreateWithTTL(t *testing.T) {
@@ -161,9 +165,14 @@ func TestPreconditionalDeleteWithSuggestionPass(t *testing.T) {
 	storagetesting.RunTestPreconditionalDeleteWithOnlySuggestionPass(ctx, t, store)
 }
 
+func TestListPaging(t *testing.T) {
+	ctx, store, _ := testSetup(t)
+	storagetesting.RunTestListPaging(ctx, t, store)
+}
+
 func TestGetListNonRecursive(t *testing.T) {
 	ctx, store, client := testSetup(t)
-	storagetesting.RunTestGetListNonRecursive(ctx, t, compactStorage(client), store)
+	storagetesting.RunTestGetListNonRecursive(ctx, t, increaseRV(client.Client), store)
 }
 
 func TestGetListRecursivePrefix(t *testing.T) {
@@ -186,9 +195,31 @@ func (s *storeWithPrefixTransformer) UpdatePrefixTransformer(modifier storagetes
 	}
 }
 
+type corruptedTransformer struct {
+	value.Transformer
+}
+
+func (f *corruptedTransformer) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
+	return nil, true, &corruptObjectError{err: fmt.Errorf("bits flipped"), errType: untransformable}
+}
+
+type storeWithCorruptedTransformer struct {
+	*store
+}
+
+func (s *storeWithCorruptedTransformer) CorruptTransformer() func() {
+	ct := &corruptedTransformer{Transformer: s.transformer}
+	s.transformer = ct
+	s.watcher.transformer = ct
+	return func() {
+		s.transformer = ct.Transformer
+		s.watcher.transformer = ct.Transformer
+	}
+}
+
 func TestGuaranteedUpdate(t *testing.T) {
-	ctx, store, etcdClient := testSetup(t)
-	storagetesting.RunTestGuaranteedUpdate(ctx, t, &storeWithPrefixTransformer{store}, checkStorageInvariants(etcdClient, store.codec))
+	ctx, store, client := testSetup(t)
+	storagetesting.RunTestGuaranteedUpdate(ctx, t, &storeWithPrefixTransformer{store}, checkStorageInvariants(client.Client, store.codec))
 }
 
 func TestGuaranteedUpdateWithTTL(t *testing.T) {
@@ -218,12 +249,12 @@ func TestTransformationFailure(t *testing.T) {
 
 func TestList(t *testing.T) {
 	ctx, store, client := testSetup(t)
-	storagetesting.RunTestList(ctx, t, store, compactStorage(client), false)
+	storagetesting.RunTestList(ctx, t, store, increaseRV(client.Client), false)
 }
 
 func TestConsistentList(t *testing.T) {
 	ctx, store, client := testSetup(t)
-	storagetesting.RunTestConsistentList(ctx, t, store, compactStorage(client), false, true)
+	storagetesting.RunTestConsistentList(ctx, t, store, increaseRV(client.Client), false, true, false)
 }
 
 func checkStorageCallsInvariants(transformer *storagetesting.PrefixTransformer, recorder *clientRecorder) storagetesting.CallsValidation {
@@ -251,48 +282,61 @@ func checkStorageCallsInvariants(transformer *storagetesting.PrefixTransformer, 
 			}
 		}
 		if reads := recorder.GetReadsAndReset(); reads != estimatedGetCalls {
-			t.Errorf("unexpected reads: %d", reads)
+			t.Fatalf("unexpected reads: %d, want: %d", reads, estimatedGetCalls)
 		}
 	}
 }
 
 func TestListContinuation(t *testing.T) {
-	ctx, store, etcdClient := testSetup(t, withRecorder())
+	ctx, store, client := testSetup(t, withRecorder())
 	validation := checkStorageCallsInvariants(
-		store.transformer.(*storagetesting.PrefixTransformer), etcdClient.KV.(*clientRecorder))
+		store.transformer.(*storagetesting.PrefixTransformer), client.KV.(*clientRecorder))
 	storagetesting.RunTestListContinuation(ctx, t, store, validation)
 }
 
 func TestListPaginationRareObject(t *testing.T) {
-	ctx, store, etcdClient := testSetup(t, withRecorder())
+	ctx, store, client := testSetup(t, withRecorder())
 	validation := checkStorageCallsInvariants(
-		store.transformer.(*storagetesting.PrefixTransformer), etcdClient.KV.(*clientRecorder))
+		store.transformer.(*storagetesting.PrefixTransformer), client.KV.(*clientRecorder))
 	storagetesting.RunTestListPaginationRareObject(ctx, t, store, validation)
 }
 
 func TestListContinuationWithFilter(t *testing.T) {
-	ctx, store, etcdClient := testSetup(t, withRecorder())
+	ctx, store, client := testSetup(t, withRecorder())
 	validation := checkStorageCallsInvariants(
-		store.transformer.(*storagetesting.PrefixTransformer), etcdClient.KV.(*clientRecorder))
+		store.transformer.(*storagetesting.PrefixTransformer), client.KV.(*clientRecorder))
 	storagetesting.RunTestListContinuationWithFilter(ctx, t, store, validation)
 }
 
-func compactStorage(etcdClient *clientv3.Client) storagetesting.Compaction {
+func TestNamespaceScopedList(t *testing.T) {
+	ctx, store, _ := testSetup(t)
+	storagetesting.RunTestNamespaceScopedList(ctx, t, store)
+}
+
+func compactStorage(client *clientv3.Client) storagetesting.Compaction {
 	return func(ctx context.Context, t *testing.T, resourceVersion string) {
 		versioner := storage.APIObjectVersioner{}
 		rv, err := versioner.ParseResourceVersion(resourceVersion)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err = compact(ctx, etcdClient, 0, int64(rv)); err != nil {
+		if _, err = client.Compact(ctx, int64(rv)); err != nil {
 			t.Fatalf("Unable to compact, %v", err)
+		}
+	}
+}
+
+func increaseRV(client *clientv3.Client) storagetesting.IncreaseRVFunc {
+	return func(ctx context.Context, t *testing.T) {
+		if _, err := client.KV.Put(ctx, "increaseRV", "ok"); err != nil {
+			t.Fatalf("Could not update increaseRV: %v", err)
 		}
 	}
 }
 
 func TestListInconsistentContinuation(t *testing.T) {
 	ctx, store, client := testSetup(t)
-	storagetesting.RunTestListInconsistentContinuation(ctx, t, store, compactStorage(client))
+	storagetesting.RunTestListInconsistentContinuation(ctx, t, store, compactStorage(client.Client))
 }
 
 func TestListResourceVersionMatch(t *testing.T) {
@@ -492,7 +536,7 @@ func (r *clientRecorder) GetReadsAndReset() uint64 {
 }
 
 type setupOptions struct {
-	client         func(testing.TB) *clientv3.Client
+	client         func(testing.TB) *kubernetes.Client
 	codec          runtime.Codec
 	newFunc        func() runtime.Object
 	newListFunc    func() runtime.Object
@@ -509,7 +553,7 @@ type setupOption func(*setupOptions)
 
 func withClientConfig(config *embed.Config) setupOption {
 	return func(options *setupOptions) {
-		options.client = func(t testing.TB) *clientv3.Client {
+		options.client = func(t testing.TB) *kubernetes.Client {
 			return testserver.RunEtcd(t, config)
 		}
 	}
@@ -534,7 +578,7 @@ func withRecorder() setupOption {
 }
 
 func withDefaults(options *setupOptions) {
-	options.client = func(t testing.TB) *clientv3.Client {
+	options.client = func(t testing.TB) *kubernetes.Client {
 		return testserver.RunEtcd(t, nil)
 	}
 	options.codec = apitesting.TestCodec(codecs, examplev1.SchemeGroupVersion)
@@ -549,7 +593,7 @@ func withDefaults(options *setupOptions) {
 
 var _ setupOption = withDefaults
 
-func testSetup(t testing.TB, opts ...setupOption) (context.Context, *store, *clientv3.Client) {
+func testSetup(t testing.TB, opts ...setupOption) (context.Context, *store, *kubernetes.Client) {
 	setupOpts := setupOptions{}
 	opts = append([]setupOption{withDefaults}, opts...)
 	for _, opt := range opts {
@@ -559,6 +603,7 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, *store, *cli
 	if setupOpts.recorderEnabled {
 		client.KV = &clientRecorder{KV: client.KV}
 	}
+	versioner := storage.APIObjectVersioner{}
 	store := newStore(
 		client,
 		setupOpts.codec,
@@ -569,6 +614,8 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, *store, *cli
 		setupOpts.groupResource,
 		setupOpts.transformer,
 		setupOpts.leaseConfig,
+		NewDefaultDecoder(setupOpts.codec, versioner),
+		versioner,
 	)
 	ctx := context.Background()
 	return ctx, store, client
@@ -639,7 +686,7 @@ func TestInvalidKeys(t *testing.T) {
 
 	ctx, store, _ := testSetup(t)
 	expectInvalidKey("Create", store.Create(ctx, invalidKey, nil, nil, 0))
-	expectInvalidKey("Delete", store.Delete(ctx, invalidKey, nil, nil, nil, nil))
+	expectInvalidKey("Delete", store.Delete(ctx, invalidKey, nil, nil, nil, nil, storage.DeleteOptions{}))
 	_, watchErr := store.Watch(ctx, invalidKey, storage.ListOptions{})
 	expectInvalidKey("Watch", watchErr)
 	expectInvalidKey("Get", store.Get(ctx, invalidKey, storage.GetOptions{}, nil))
@@ -647,129 +694,6 @@ func TestInvalidKeys(t *testing.T) {
 	expectInvalidKey("GuaranteedUpdate", store.GuaranteedUpdate(ctx, invalidKey, nil, true, nil, nil, nil))
 	_, countErr := store.Count(invalidKey)
 	expectInvalidKey("Count", countErr)
-}
-
-func TestResolveGetListRev(t *testing.T) {
-	_, store, _ := testSetup(t)
-	testCases := []struct {
-		name          string
-		continueKey   string
-		continueRV    int64
-		rv            string
-		rvMatch       metav1.ResourceVersionMatch
-		recursive     bool
-		expectedError string
-		limit         int64
-		expectedRev   int64
-	}{
-		{
-			name:          "specifying resource versionwhen using continue",
-			continueKey:   "continue",
-			continueRV:    100,
-			rv:            "200",
-			expectedError: "specifying resource version is not allowed when using continue",
-		},
-		{
-			name:          "invalid resource version",
-			rv:            "invalid",
-			expectedError: "invalid resource version",
-		},
-		{
-			name:          "unknown ResourceVersionMatch value",
-			rv:            "200",
-			rvMatch:       "unknown",
-			expectedError: "unknown ResourceVersionMatch value",
-		},
-		{
-			name:        "use continueRV",
-			continueKey: "continue",
-			continueRV:  100,
-			rv:          "0",
-			expectedRev: 100,
-		},
-		{
-			name:        "use continueRV with empty rv",
-			continueKey: "continue",
-			continueRV:  100,
-			rv:          "",
-			expectedRev: 100,
-		},
-		{
-			name:        "continueRV = 0",
-			continueKey: "continue",
-			continueRV:  0,
-			rv:          "",
-			expectedRev: 0,
-		},
-		{
-			name:        "continueRV < 0",
-			continueKey: "continue",
-			continueRV:  -1,
-			rv:          "",
-			expectedRev: 0,
-		},
-		{
-			name:        "default",
-			expectedRev: 0,
-		},
-		{
-			name:        "rev resolve to 0 if ResourceVersionMatchNotOlderThan",
-			rv:          "200",
-			rvMatch:     metav1.ResourceVersionMatchNotOlderThan,
-			expectedRev: 0,
-		},
-		{
-			name:        "specified rev if ResourceVersionMatchExact",
-			rv:          "200",
-			rvMatch:     metav1.ResourceVersionMatchExact,
-			expectedRev: 200,
-		},
-		{
-			name:        "rev resolve to 0 if not recursive",
-			rv:          "200",
-			limit:       1,
-			expectedRev: 0,
-		},
-		{
-			name:        "rev resolve to 0 if limit unspecified",
-			rv:          "200",
-			recursive:   true,
-			expectedRev: 0,
-		},
-		{
-			name:        "specified rev if recursive with limit",
-			rv:          "200",
-			recursive:   true,
-			limit:       1,
-			expectedRev: 200,
-		},
-	}
-	for _, tt := range testCases {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			storageOpts := storage.ListOptions{
-				ResourceVersion:      tt.rv,
-				ResourceVersionMatch: tt.rvMatch,
-				Predicate: storage.SelectionPredicate{
-					Limit: tt.limit,
-				},
-				Recursive: tt.recursive,
-			}
-			rev, err := store.resolveGetListRev(tt.continueKey, tt.continueRV, storageOpts)
-			if len(tt.expectedError) > 0 {
-				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
-					t.Fatalf("expected error: %s, but got: %v", tt.expectedError, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("resolveRevForGetList failed: %v", err)
-			}
-			if rev != tt.expectedRev {
-				t.Errorf("%s: expecting rev = %d, but get %d", tt.name, tt.expectedRev, rev)
-			}
-		})
-	}
 }
 
 func BenchmarkStore_GetList(b *testing.B) {
@@ -899,4 +823,106 @@ func BenchmarkStore_GetList(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkStoreListCreate(b *testing.B) {
+	klog.SetLogger(logr.Discard())
+	b.Run("RV=NotOlderThan", func(b *testing.B) {
+		ctx, store, _ := testSetup(b)
+		storagetesting.RunBenchmarkStoreListCreate(ctx, b, store, metav1.ResourceVersionMatchNotOlderThan)
+	})
+	b.Run("RV=ExactMatch", func(b *testing.B) {
+		ctx, store, _ := testSetup(b)
+		storagetesting.RunBenchmarkStoreListCreate(ctx, b, store, metav1.ResourceVersionMatchExact)
+	})
+}
+
+func BenchmarkStoreList(b *testing.B) {
+	klog.SetLogger(logr.Discard())
+	// Based on https://github.com/kubernetes/community/blob/master/sig-scalability/configs-and-limits/thresholds.md
+	dimensions := []struct {
+		namespaceCount       int
+		podPerNamespaceCount int
+		nodeCount            int
+	}{
+		{
+			namespaceCount:       10_000,
+			podPerNamespaceCount: 15,
+			nodeCount:            5_000,
+		},
+		{
+			namespaceCount:       50,
+			podPerNamespaceCount: 3_000,
+			nodeCount:            5_000,
+		},
+		{
+			namespaceCount:       100,
+			podPerNamespaceCount: 1_100,
+			nodeCount:            1000,
+		},
+	}
+	for _, dims := range dimensions {
+		b.Run(fmt.Sprintf("Namespaces=%d/Pods=%d/Nodes=%d", dims.namespaceCount, dims.namespaceCount*dims.podPerNamespaceCount, dims.nodeCount), func(b *testing.B) {
+			data := storagetesting.PrepareBenchchmarkData(dims.namespaceCount, dims.podPerNamespaceCount, dims.nodeCount)
+			ctx, store, _ := testSetup(b)
+			var out example.Pod
+			for _, pod := range data.Pods {
+				err := store.Create(ctx, computePodKey(pod), pod, &out, 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			storagetesting.RunBenchmarkStoreList(ctx, b, store, data, false)
+		})
+	}
+}
+
+func computePodKey(obj *example.Pod) string {
+	return fmt.Sprintf("/pods/%s/%s", obj.Namespace, obj.Name)
+}
+
+func TestGetCurrentResourceVersion(t *testing.T) {
+	ctx, store, _ := testSetup(t)
+
+	makePod := func(name string) *example.Pod {
+		return &example.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name},
+		}
+	}
+	createPod := func(obj *example.Pod) *example.Pod {
+		key := "pods/" + obj.Namespace + "/" + obj.Name
+		out := &example.Pod{}
+		err := store.Create(context.TODO(), key, obj, out, 0)
+		require.NoError(t, err)
+		return out
+	}
+	getPod := func(name, ns string) *example.Pod {
+		key := "pods/" + ns + "/" + name
+		out := &example.Pod{}
+		err := store.Get(context.TODO(), key, storage.GetOptions{}, out)
+		require.NoError(t, err)
+		return out
+	}
+
+	// create a pod and make sure its RV is equal to the one maintained by etcd
+	pod := createPod(makePod("pod-1"))
+	currentStorageRV, err := store.GetCurrentResourceVersion(context.TODO())
+	require.NoError(t, err)
+	podRV, err := store.versioner.ParseResourceVersion(pod.ResourceVersion)
+	require.NoError(t, err)
+	require.Equal(t, currentStorageRV, podRV, "expected the global etcd RV to be equal to pod's RV")
+
+	// now make unrelated write and make sure the target function returns global etcd RV
+	resp, err := store.client.KV.Put(ctx, "compact_rev_key", pod.ResourceVersion)
+	require.NoError(t, err)
+	currentStorageRV, err = store.GetCurrentResourceVersion(context.TODO())
+	require.NoError(t, err)
+	require.NoError(t, err)
+	require.Equal(t, currentStorageRV, uint64(resp.Header.Revision), "expected the global etcd RV to be equal to replicaset's RV")
+
+	// ensure that the pod's RV hasn't been changed
+	currentPod := getPod(pod.Name, pod.Namespace)
+	currentPodRV, err := store.versioner.ParseResourceVersion(currentPod.ResourceVersion)
+	require.NoError(t, err)
+	require.Equal(t, currentPodRV, podRV, "didn't expect to see the pod's RV changed")
 }

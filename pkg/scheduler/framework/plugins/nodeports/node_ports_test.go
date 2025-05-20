@@ -18,17 +18,18 @@ package nodeports
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2/ktesting"
 	_ "k8s.io/klog/v2/ktesting/init"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
 )
 
@@ -146,7 +147,7 @@ func TestNodePorts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			_, ctx := ktesting.NewTestContext(t)
-			p, err := New(ctx, nil, nil)
+			p, err := New(ctx, nil, nil, feature.Features{})
 			if err != nil {
 				t.Fatalf("creating plugin: %v", err)
 			}
@@ -175,15 +176,15 @@ func TestPreFilterDisabled(t *testing.T) {
 	nodeInfo := framework.NewNodeInfo()
 	node := v1.Node{}
 	nodeInfo.SetNode(&node)
-	p, err := New(ctx, nil, nil)
+	p, err := New(ctx, nil, nil, feature.Features{})
 	if err != nil {
 		t.Fatalf("creating plugin: %v", err)
 	}
 	cycleState := framework.NewCycleState()
 	gotStatus := p.(framework.FilterPlugin).Filter(ctx, cycleState, pod, nodeInfo)
-	wantStatus := framework.AsStatus(fmt.Errorf(`reading "PreFilterNodePorts" from cycleState: %w`, framework.ErrNotFound))
-	if !reflect.DeepEqual(gotStatus, wantStatus) {
-		t.Errorf("status does not match: %v, want: %v", gotStatus, wantStatus)
+	wantStatus := framework.AsStatus(framework.ErrNotFound)
+	if diff := cmp.Diff(wantStatus, gotStatus); diff != "" {
+		t.Errorf("status does not match (-want,+got):\n%s", diff)
 	}
 }
 
@@ -341,7 +342,7 @@ func Test_isSchedulableAfterPodDeleted(t *testing.T) {
 	for name, tc := range testcases {
 		t.Run(name, func(t *testing.T) {
 			logger, ctx := ktesting.NewTestContext(t)
-			p, err := New(ctx, nil, nil)
+			p, err := New(ctx, nil, nil, feature.Features{})
 			if err != nil {
 				t.Fatalf("Creating plugin: %v", err)
 			}

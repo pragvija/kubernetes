@@ -18,17 +18,16 @@ package tainttoleration
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2/ktesting"
+	"k8s.io/kubernetes/pkg/scheduler/backend/cache"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/runtime"
-	"k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	tf "k8s.io/kubernetes/pkg/scheduler/testing/framework"
 )
 
@@ -244,14 +243,15 @@ func TestTaintTolerationScore(t *testing.T) {
 			if err != nil {
 				t.Fatalf("creating plugin: %v", err)
 			}
-			status := p.(framework.PreScorePlugin).PreScore(ctx, state, test.pod, tf.BuildNodeInfos(test.nodes))
+			nodeInfos := tf.BuildNodeInfos(test.nodes)
+			status := p.(framework.PreScorePlugin).PreScore(ctx, state, test.pod, nodeInfos)
 			if !status.IsSuccess() {
 				t.Errorf("unexpected error: %v", status)
 			}
 			var gotList framework.NodeScoreList
-			for _, n := range test.nodes {
-				nodeName := n.ObjectMeta.Name
-				score, status := p.(framework.ScorePlugin).Score(ctx, state, test.pod, nodeName)
+			for _, nodeInfo := range nodeInfos {
+				nodeName := nodeInfo.Node().Name
+				score, status := p.(framework.ScorePlugin).Score(ctx, state, test.pod, nodeInfo)
 				if !status.IsSuccess() {
 					t.Errorf("unexpected error: %v", status)
 				}
@@ -263,8 +263,8 @@ func TestTaintTolerationScore(t *testing.T) {
 				t.Errorf("unexpected error: %v", status)
 			}
 
-			if !reflect.DeepEqual(test.expectedList, gotList) {
-				t.Errorf("expected:\n\t%+v,\ngot:\n\t%+v", test.expectedList, gotList)
+			if diff := cmp.Diff(test.expectedList, gotList); diff != "" {
+				t.Errorf("Unexpected NodeScoreList (-want,+got):\n%s", diff)
 			}
 		})
 	}
@@ -349,8 +349,8 @@ func TestTaintTolerationFilter(t *testing.T) {
 				t.Fatalf("creating plugin: %v", err)
 			}
 			gotStatus := p.(framework.FilterPlugin).Filter(ctx, nil, test.pod, nodeInfo)
-			if !reflect.DeepEqual(gotStatus, test.wantStatus) {
-				t.Errorf("status does not match: %v, want: %v", gotStatus, test.wantStatus)
+			if diff := cmp.Diff(test.wantStatus, gotStatus); diff != "" {
+				t.Errorf("Unexpected status (-want,+got):\n%s", diff)
 			}
 		})
 	}
@@ -421,7 +421,7 @@ func TestIsSchedulableAfterNodeChange(t *testing.T) {
 	}
 }
 
-func Test_isSchedulableAfterPodChange(t *testing.T) {
+func Test_isSchedulableAfterPodTolerationChange(t *testing.T) {
 	testcases := map[string]struct {
 		pod            *v1.Pod
 		oldObj, newObj interface{}
@@ -472,27 +472,6 @@ func Test_isSchedulableAfterPodChange(t *testing.T) {
 			expectedHint: framework.QueueSkip,
 			expectedErr:  false,
 		},
-		"skip-updates-not-toleration": {
-			pod: &v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "pod-1",
-					Namespace: "ns-1",
-				}},
-			oldObj: &v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "pod-1",
-					Namespace: "ns-1",
-				}},
-			newObj: &v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "pod-1",
-					Namespace: "ns-1",
-					Labels:    map[string]string{"foo": "bar"},
-				},
-			},
-			expectedHint: framework.QueueSkip,
-			expectedErr:  false,
-		},
 		"queue-on-toleration-added": {
 			pod: &v1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -530,7 +509,7 @@ func Test_isSchedulableAfterPodChange(t *testing.T) {
 			if err != nil {
 				t.Fatalf("creating plugin: %v", err)
 			}
-			actualHint, err := p.(*TaintToleration).isSchedulableAfterPodChange(logger, tc.pod, tc.oldObj, tc.newObj)
+			actualHint, err := p.(*TaintToleration).isSchedulableAfterPodTolerationChange(logger, tc.pod, tc.oldObj, tc.newObj)
 			if tc.expectedErr {
 				if err == nil {
 					t.Errorf("unexpected success")

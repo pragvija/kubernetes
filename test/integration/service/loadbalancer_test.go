@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -33,10 +34,8 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	servicecontroller "k8s.io/cloud-provider/controllers/service"
 	fakecloud "k8s.io/cloud-provider/fake"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	controllersmetrics "k8s.io/component-base/metrics/prometheus/controllers"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
-	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/utils/net"
 	utilpointer "k8s.io/utils/pointer"
@@ -707,8 +706,12 @@ func Test_ServiceLoadBalancerIPMode(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
-			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.LoadBalancerIPMode, tc.ipModeEnabled)
-			server := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())
+			serverFlags := framework.DefaultTestServerFlags()
+			if !tc.ipModeEnabled {
+				serverFlags = append(serverFlags, "--emulated-version=1.31")
+			}
+			serverFlags = append(serverFlags, fmt.Sprintf("--feature-gates=LoadBalancerIPMode=%v", tc.ipModeEnabled))
+			server := kubeapiservertesting.StartTestServerOrDie(t, nil, serverFlags, framework.SharedEtcd())
 			defer server.TearDownFn()
 
 			client, err := clientset.NewForConfig(server.ClientConfig)

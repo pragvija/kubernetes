@@ -29,6 +29,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/apis/config/validation"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	"k8s.io/kubernetes/pkg/scheduler/framework/parallelize"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/feature"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 	"k8s.io/kubernetes/pkg/scheduler/util"
 )
@@ -44,10 +45,11 @@ var _ framework.EnqueueExtensions = &InterPodAffinity{}
 
 // InterPodAffinity is a plugin that checks inter pod affinity
 type InterPodAffinity struct {
-	parallelizer parallelize.Parallelizer
-	args         config.InterPodAffinityArgs
-	sharedLister framework.SharedLister
-	nsLister     listersv1.NamespaceLister
+	parallelizer              parallelize.Parallelizer
+	args                      config.InterPodAffinityArgs
+	sharedLister              framework.SharedLister
+	nsLister                  listersv1.NamespaceLister
+	enableSchedulingQueueHint bool
 }
 
 // Name returns name of the plugin. It is used in logs, etc.
@@ -58,6 +60,15 @@ func (pl *InterPodAffinity) Name() string {
 // EventsToRegister returns the possible events that may make a failed Pod
 // schedulable
 func (pl *InterPodAffinity) EventsToRegister(_ context.Context) ([]framework.ClusterEventWithHint, error) {
+	// A note about UpdateNodeTaint event:
+	// Ideally, it's supposed to register only Add | UpdateNodeLabel because UpdateNodeTaint will never change the result from this plugin.
+	// But, we may miss Node/Add event due to preCheck, and we decided to register UpdateNodeTaint | UpdateNodeLabel for all plugins registering Node/Add.
+	// See: https://github.com/kubernetes/kubernetes/issues/109437
+	nodeActionType := framework.Add | framework.UpdateNodeLabel | framework.UpdateNodeTaint
+	if pl.enableSchedulingQueueHint {
+		// When QueueingHint is enabled, we don't use preCheck and we don't need to register UpdateNodeTaint event.
+		nodeActionType = framework.Add | framework.UpdateNodeLabel
+	}
 	return []framework.ClusterEventWithHint{
 		// All ActionType includes the following events:
 		// - Delete. An unschedulable Pod may fail due to violating an existing Pod's anti-affinity constraints,
@@ -66,22 +77,13 @@ func (pl *InterPodAffinity) EventsToRegister(_ context.Context) ([]framework.Clu
 		// an unschedulable Pod schedulable.
 		// - Add. An unschedulable Pod may fail due to violating pod-affinity constraints,
 		// adding an assigned Pod may make it schedulable.
-		//
-		// A note about UpdateNodeTaint event:
-		// NodeAdd QueueingHint isn't always called because of the internal feature called preCheck.
-		// As a common problematic scenario,
-		// when a node is added but not ready, NodeAdd event is filtered out by preCheck and doesn't arrive.
-		// In such cases, this plugin may miss some events that actually make pods schedulable.
-		// As a workaround, we add UpdateNodeTaint event to catch the case.
-		// We can remove UpdateNodeTaint when we remove the preCheck feature.
-		// See: https://github.com/kubernetes/kubernetes/issues/110175
 		{Event: framework.ClusterEvent{Resource: framework.Pod, ActionType: framework.Add | framework.UpdatePodLabel | framework.Delete}, QueueingHintFn: pl.isSchedulableAfterPodChange},
-		{Event: framework.ClusterEvent{Resource: framework.Node, ActionType: framework.Add | framework.UpdateNodeLabel | framework.UpdateNodeTaint}, QueueingHintFn: pl.isSchedulableAfterNodeChange},
+		{Event: framework.ClusterEvent{Resource: framework.Node, ActionType: nodeActionType}, QueueingHintFn: pl.isSchedulableAfterNodeChange},
 	}, nil
 }
 
 // New initializes a new plugin and returns it.
-func New(_ context.Context, plArgs runtime.Object, h framework.Handle) (framework.Plugin, error) {
+func New(_ context.Context, plArgs runtime.Object, h framework.Handle, fts feature.Features) (framework.Plugin, error) {
 	if h.SnapshotSharedLister() == nil {
 		return nil, fmt.Errorf("SnapshotSharedlister is nil")
 	}
@@ -93,10 +95,11 @@ func New(_ context.Context, plArgs runtime.Object, h framework.Handle) (framewor
 		return nil, err
 	}
 	pl := &InterPodAffinity{
-		parallelizer: h.Parallelizer(),
-		args:         args,
-		sharedLister: h.SnapshotSharedLister(),
-		nsLister:     h.SharedInformerFactory().Core().V1().Namespaces().Lister(),
+		parallelizer:              h.Parallelizer(),
+		args:                      args,
+		sharedLister:              h.SnapshotSharedLister(),
+		nsLister:                  h.SharedInformerFactory().Core().V1().Namespaces().Lister(),
+		enableSchedulingQueueHint: fts.EnableSchedulingQueueHint,
 	}
 
 	return pl, nil
@@ -208,7 +211,7 @@ func (pl *InterPodAffinity) isSchedulableAfterPodChange(logger klog.Logger, pod 
 }
 
 func (pl *InterPodAffinity) isSchedulableAfterNodeChange(logger klog.Logger, pod *v1.Pod, oldObj, newObj interface{}) (framework.QueueingHint, error) {
-	_, modifiedNode, err := util.As[*v1.Node](oldObj, newObj)
+	originalNode, modifiedNode, err := util.As[*v1.Node](oldObj, newObj)
 	if err != nil {
 		return framework.Queue, err
 	}
@@ -218,11 +221,35 @@ func (pl *InterPodAffinity) isSchedulableAfterNodeChange(logger klog.Logger, pod
 		return framework.Queue, err
 	}
 
+	// When queuing this Pod:
+	// - 1. A new node is added with the pod affinity topologyKey, the pod may become schedulable.
+	// - 2. The original node does not have the pod affinity topologyKey but the modified node does, the pod may become schedulable.
+	// - 3. Both the original and modified nodes have the pod affinity topologyKey and they differ, the pod may become schedulable.
 	for _, term := range terms {
-		if _, ok := modifiedNode.Labels[term.TopologyKey]; ok {
-			logger.V(5).Info("a node with matched pod affinity topologyKey was added/updated and it may make pod schedulable",
+		if originalNode == nil {
+			if _, ok := modifiedNode.Labels[term.TopologyKey]; ok {
+				// Case 1: A new node is added with the pod affinity topologyKey.
+				logger.V(5).Info("A node with a matched pod affinity topologyKey was added and it may make the pod schedulable",
+					"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
+				return framework.Queue, nil
+			}
+			continue
+		}
+		originalTopologyValue, originalHasKey := originalNode.Labels[term.TopologyKey]
+		modifiedTopologyValue, modifiedHasKey := modifiedNode.Labels[term.TopologyKey]
+
+		if !originalHasKey && modifiedHasKey {
+			// Case 2: Original node does not have the pod affinity topologyKey, but the modified node does.
+			logger.V(5).Info("A node got updated to have the topology key of pod affinity, which may make the pod schedulable",
 				"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
-			return framework.Queue, err
+			return framework.Queue, nil
+		}
+
+		if originalHasKey && modifiedHasKey && (originalTopologyValue != modifiedTopologyValue) {
+			// Case 3: Both nodes have the pod affinity topologyKey, but the values differ.
+			logger.V(5).Info("A node is moved to a different domain of pod affinity, which may make the pod schedulable",
+				"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
+			return framework.Queue, nil
 		}
 	}
 
@@ -231,11 +258,39 @@ func (pl *InterPodAffinity) isSchedulableAfterNodeChange(logger klog.Logger, pod
 		return framework.Queue, err
 	}
 
+	// When queuing this Pod:
+	// - 1. A new node is added, the pod may become schedulable.
+	// - 2. The original node have the pod anti-affinity topologyKey but the modified node does not, the pod may become schedulable.
+	// - 3. Both the original and modified nodes have the pod anti-affinity topologyKey and they differ, the pod may become schedulable.
 	for _, term := range antiTerms {
-		if _, ok := modifiedNode.Labels[term.TopologyKey]; ok {
-			logger.V(5).Info("a node with matched pod anti-affinity topologyKey was added/updated and it may make pod schedulable",
+		if originalNode == nil {
+			// Case 1: A new node is added.
+			// We always requeue the Pod with anti-affinity because:
+			// - the node without the topology key is always allowed to have a Pod with anti-affinity.
+			// - the addition of a node with the topology key makes Pods schedulable only when the topology it joins doesn't have any Pods that the Pod hates.
+			//   But, it's out-of-scope of this QHint to check which Pods are in the topology this Node is in.
+			logger.V(5).Info("A node was added and it may make the pod schedulable",
 				"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
-			return framework.Queue, err
+			return framework.Queue, nil
+		}
+
+		originalTopologyValue, originalHasKey := originalNode.Labels[term.TopologyKey]
+		modifiedTopologyValue, modifiedHasKey := modifiedNode.Labels[term.TopologyKey]
+
+		if originalHasKey && !modifiedHasKey {
+			// Case 2: The original node have the pod anti-affinity topologyKey but the modified node does not.
+			// Note that we don't need to check the opposite case (!originalHasKey && modifiedHasKey)
+			// because the node without the topology label can always accept pods with pod anti-affinity.
+			logger.V(5).Info("A node got updated to not have the topology key of pod anti-affinity, which may make the pod schedulable",
+				"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
+			return framework.Queue, nil
+		}
+
+		if originalHasKey && modifiedHasKey && (originalTopologyValue != modifiedTopologyValue) {
+			// Case 3: Both nodes have the pod anti-affinity topologyKey, but the values differ.
+			logger.V(5).Info("A node is moved to a different domain of pod anti-affinity, which may make the pod schedulable",
+				"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
+			return framework.Queue, nil
 		}
 	}
 	logger.V(5).Info("a node is added/updated but doesn't have any topologyKey which matches pod affinity/anti-affinity",

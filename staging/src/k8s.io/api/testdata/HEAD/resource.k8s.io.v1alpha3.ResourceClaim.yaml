@@ -33,7 +33,6 @@ metadata:
   selfLink: selfLinkValue
   uid: uidValue
 spec:
-  controller: controllerValue
   devices:
     config:
     - opaque:
@@ -56,13 +55,32 @@ spec:
       allocationMode: allocationModeValue
       count: 5
       deviceClassName: deviceClassNameValue
+      firstAvailable:
+      - allocationMode: allocationModeValue
+        count: 5
+        deviceClassName: deviceClassNameValue
+        name: nameValue
+        selectors:
+        - cel:
+            expression: expressionValue
+        tolerations:
+        - effect: effectValue
+          key: keyValue
+          operator: operatorValue
+          tolerationSeconds: 5
+          value: valueValue
       name: nameValue
       selectors:
       - cel:
           expression: expressionValue
+      tolerations:
+      - effect: effectValue
+        key: keyValue
+        operator: operatorValue
+        tolerationSeconds: 5
+        value: valueValue
 status:
   allocation:
-    controller: controllerValue
     devices:
       config:
       - opaque:
@@ -78,10 +96,17 @@ status:
         - requestsValue
         source: sourceValue
       results:
-      - device: deviceValue
+      - adminAccess: true
+        device: deviceValue
         driver: driverValue
         pool: poolValue
         request: requestValue
+        tolerations:
+        - effect: effectValue
+          key: keyValue
+          operator: operatorValue
+          tolerationSeconds: 5
+          value: valueValue
     nodeSelector:
       nodeSelectorTerms:
       - matchExpressions:
@@ -94,7 +119,29 @@ status:
           operator: operatorValue
           values:
           - valuesValue
-  deallocationRequested: true
+  devices:
+  - conditions:
+    - lastTransitionTime: "2004-01-01T01:01:01Z"
+      message: messageValue
+      observedGeneration: 3
+      reason: reasonValue
+      status: statusValue
+      type: typeValue
+    data:
+      apiVersion: example.com/v1
+      kind: CustomType
+      spec:
+        replicas: 1
+      status:
+        available: 1
+    device: deviceValue
+    driver: driverValue
+    networkData:
+      hardwareAddress: hardwareAddressValue
+      interfaceName: interfaceNameValue
+      ips:
+      - ipsValue
+    pool: poolValue
   reservedFor:
   - apiGroup: apiGroupValue
     name: nameValue

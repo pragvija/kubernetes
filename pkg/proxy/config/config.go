@@ -24,12 +24,12 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	networkingv1beta1 "k8s.io/api/networking/v1beta1"
+	networkingv1 "k8s.io/api/networking/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	v1informers "k8s.io/client-go/informers/core/v1"
 	discoveryv1informers "k8s.io/client-go/informers/discovery/v1"
-	networkingv1beta1informers "k8s.io/client-go/informers/networking/v1beta1"
+	networkingv1informers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -78,11 +78,10 @@ type EndpointSliceConfig struct {
 // NewEndpointSliceConfig creates a new EndpointSliceConfig.
 func NewEndpointSliceConfig(ctx context.Context, endpointSliceInformer discoveryv1informers.EndpointSliceInformer, resyncPeriod time.Duration) *EndpointSliceConfig {
 	result := &EndpointSliceConfig{
-		listerSynced: endpointSliceInformer.Informer().HasSynced,
-		logger:       klog.FromContext(ctx),
+		logger: klog.FromContext(ctx),
 	}
 
-	_, _ = endpointSliceInformer.Informer().AddEventHandlerWithResyncPeriod(
+	handlerRegistration, _ := endpointSliceInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    result.handleAddEndpointSlice,
 			UpdateFunc: result.handleUpdateEndpointSlice,
@@ -90,6 +89,8 @@ func NewEndpointSliceConfig(ctx context.Context, endpointSliceInformer discovery
 		},
 		resyncPeriod,
 	)
+
+	result.listerSynced = handlerRegistration.HasSynced
 
 	return result
 }
@@ -128,7 +129,7 @@ func (c *EndpointSliceConfig) handleAddEndpointSlice(obj interface{}) {
 func (c *EndpointSliceConfig) handleUpdateEndpointSlice(oldObj, newObj interface{}) {
 	oldEndpointSlice, ok := oldObj.(*discoveryv1.EndpointSlice)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("unexpected object type: %T", newObj))
+		utilruntime.HandleError(fmt.Errorf("unexpected object type: %T", oldObj))
 		return
 	}
 	newEndpointSlice, ok := newObj.(*discoveryv1.EndpointSlice)
@@ -171,11 +172,10 @@ type ServiceConfig struct {
 // NewServiceConfig creates a new ServiceConfig.
 func NewServiceConfig(ctx context.Context, serviceInformer v1informers.ServiceInformer, resyncPeriod time.Duration) *ServiceConfig {
 	result := &ServiceConfig{
-		listerSynced: serviceInformer.Informer().HasSynced,
-		logger:       klog.FromContext(ctx),
+		logger: klog.FromContext(ctx),
 	}
 
-	_, _ = serviceInformer.Informer().AddEventHandlerWithResyncPeriod(
+	handlerRegistration, _ := serviceInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    result.handleAddService,
 			UpdateFunc: result.handleUpdateService,
@@ -183,6 +183,8 @@ func NewServiceConfig(ctx context.Context, serviceInformer v1informers.ServiceIn
 		},
 		resyncPeriod,
 	)
+
+	result.listerSynced = handlerRegistration.HasSynced
 
 	return result
 }
@@ -300,11 +302,10 @@ type NodeConfig struct {
 // NewNodeConfig creates a new NodeConfig.
 func NewNodeConfig(ctx context.Context, nodeInformer v1informers.NodeInformer, resyncPeriod time.Duration) *NodeConfig {
 	result := &NodeConfig{
-		listerSynced: nodeInformer.Informer().HasSynced,
-		logger:       klog.FromContext(ctx),
+		logger: klog.FromContext(ctx),
 	}
 
-	_, _ = nodeInformer.Informer().AddEventHandlerWithResyncPeriod(
+	handlerRegistration, _ := nodeInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    result.handleAddNode,
 			UpdateFunc: result.handleUpdateNode,
@@ -312,6 +313,8 @@ func NewNodeConfig(ctx context.Context, nodeInformer v1informers.NodeInformer, r
 		},
 		resyncPeriod,
 	)
+
+	result.listerSynced = handlerRegistration.HasSynced
 
 	return result
 }
@@ -401,14 +404,13 @@ type ServiceCIDRConfig struct {
 }
 
 // NewServiceCIDRConfig creates a new ServiceCIDRConfig.
-func NewServiceCIDRConfig(ctx context.Context, serviceCIDRInformer networkingv1beta1informers.ServiceCIDRInformer, resyncPeriod time.Duration) *ServiceCIDRConfig {
+func NewServiceCIDRConfig(ctx context.Context, serviceCIDRInformer networkingv1informers.ServiceCIDRInformer, resyncPeriod time.Duration) *ServiceCIDRConfig {
 	result := &ServiceCIDRConfig{
-		listerSynced: serviceCIDRInformer.Informer().HasSynced,
-		cidrs:        sets.New[string](),
-		logger:       klog.FromContext(ctx),
+		cidrs:  sets.New[string](),
+		logger: klog.FromContext(ctx),
 	}
 
-	_, _ = serviceCIDRInformer.Informer().AddEventHandlerWithResyncPeriod(
+	handlerRegistration, _ := serviceCIDRInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				result.handleServiceCIDREvent(nil, obj)
@@ -422,6 +424,9 @@ func NewServiceCIDRConfig(ctx context.Context, serviceCIDRInformer networkingv1b
 		},
 		resyncPeriod,
 	)
+
+	result.listerSynced = handlerRegistration.HasSynced
+
 	return result
 }
 
@@ -443,11 +448,11 @@ func (c *ServiceCIDRConfig) Run(stopCh <-chan struct{}) {
 // handleServiceCIDREvent is a helper function to handle Add, Update and Delete
 // events on ServiceCIDR objects and call downstream event handlers.
 func (c *ServiceCIDRConfig) handleServiceCIDREvent(oldObj, newObj interface{}) {
-	var oldServiceCIDR, newServiceCIDR *networkingv1beta1.ServiceCIDR
+	var oldServiceCIDR, newServiceCIDR *networkingv1.ServiceCIDR
 	var ok bool
 
 	if oldObj != nil {
-		oldServiceCIDR, ok = oldObj.(*networkingv1beta1.ServiceCIDR)
+		oldServiceCIDR, ok = oldObj.(*networkingv1.ServiceCIDR)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", oldObj))
 			return
@@ -455,7 +460,7 @@ func (c *ServiceCIDRConfig) handleServiceCIDREvent(oldObj, newObj interface{}) {
 	}
 
 	if newObj != nil {
-		newServiceCIDR, ok = newObj.(*networkingv1beta1.ServiceCIDR)
+		newServiceCIDR, ok = newObj.(*networkingv1.ServiceCIDR)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("unexpected object type: %v", newObj))
 			return

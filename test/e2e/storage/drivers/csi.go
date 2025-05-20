@@ -62,7 +62,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/test/e2e/feature"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -158,6 +157,7 @@ func InitHostPathCSIDriver() storageframework.TestDriver {
 		storageframework.CapReadWriteOncePod:               true,
 		storageframework.CapMultiplePVsSameID:              true,
 		storageframework.CapFSResizeFromSourceNotSupported: true,
+		storageframework.CapVolumeGroupSnapshot:            true,
 
 		// This is needed for the
 		// testsuites/volumelimits.go `should support volume limits`
@@ -223,12 +223,17 @@ func (h *hostpathCSIDriver) GetVolumeAttributesClass(_ context.Context, config *
 		},
 	}, config.Framework.Namespace.Name, "e2e-vac-hostpath")
 }
+func (h *hostpathCSIDriver) GetVolumeGroupSnapshotClass(ctx context.Context, config *storageframework.PerTestConfig, parameters map[string]string) *unstructured.Unstructured {
+	snapshotter := config.GetUniqueDriverName()
+	ns := config.Framework.Namespace.Name
+
+	return utils.GenerateVolumeGroupSnapshotClassSpec(snapshotter, parameters, ns)
+}
 
 func (h *hostpathCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework) *storageframework.PerTestConfig {
 	// Create secondary namespace which will be used for creating driver
 	driverNamespace := utils.CreateDriverNamespace(ctx, f)
 	driverns := driverNamespace.Name
-	testns := f.Namespace.Name
 
 	ginkgo.By(fmt.Sprintf("deploying %s driver", h.driverInfo.Name))
 	cancelLogging := utils.StartPodLogs(ctx, f, driverNamespace)
@@ -321,7 +326,6 @@ func (h *hostpathCSIDriver) PrepareTest(ctx context.Context, f *framework.Framew
 	cleanupFunc := generateDriverCleanupFunc(
 		f,
 		h.driverInfo.Name,
-		testns,
 		driverns,
 		cancelLogging)
 	ginkgo.DeferCleanup(cleanupFunc)
@@ -344,12 +348,13 @@ type mockCSIDriver struct {
 	requiresRepublish             *bool
 	fsGroupPolicy                 *storagev1.FSGroupPolicy
 	enableVolumeMountGroup        bool
+	enableNodeVolumeCondition     bool
 	embedded                      bool
 	calls                         MockCSICalls
 	embeddedCSIDriver             *mockdriver.CSIDriver
 	enableSELinuxMount            *bool
 	enableRecoverExpansionFailure bool
-	enableHonorPVReclaimPolicy    bool
+	disableControllerExpansion    bool
 
 	// Additional values set during PrepareTest
 	clientSet       clientset.Interface
@@ -391,14 +396,15 @@ type CSIMockDriverOpts struct {
 	EnableTopology                bool
 	EnableResizing                bool
 	EnableNodeExpansion           bool
+	DisableControllerExpansion    bool
 	EnableSnapshot                bool
 	EnableVolumeMountGroup        bool
+	EnableNodeVolumeCondition     bool
 	TokenRequests                 []storagev1.TokenRequest
 	RequiresRepublish             *bool
 	FSGroupPolicy                 *storagev1.FSGroupPolicy
 	EnableSELinuxMount            *bool
 	EnableRecoverExpansionFailure bool
-	EnableHonorPVReclaimPolicy    bool
 
 	// Embedded defines whether the CSI mock driver runs
 	// inside the cluster (false, the default) or just a proxy
@@ -547,13 +553,14 @@ func InitMockCSIDriver(driverOpts CSIMockDriverOpts) MockCSITestDriver {
 		attachable:                    !driverOpts.DisableAttach,
 		attachLimit:                   driverOpts.AttachLimit,
 		enableNodeExpansion:           driverOpts.EnableNodeExpansion,
+		enableNodeVolumeCondition:     driverOpts.EnableNodeVolumeCondition,
+		disableControllerExpansion:    driverOpts.DisableControllerExpansion,
 		tokenRequests:                 driverOpts.TokenRequests,
 		requiresRepublish:             driverOpts.RequiresRepublish,
 		fsGroupPolicy:                 driverOpts.FSGroupPolicy,
 		enableVolumeMountGroup:        driverOpts.EnableVolumeMountGroup,
 		enableSELinuxMount:            driverOpts.EnableSELinuxMount,
 		enableRecoverExpansionFailure: driverOpts.EnableRecoverExpansionFailure,
-		enableHonorPVReclaimPolicy:    driverOpts.EnableHonorPVReclaimPolicy,
 		embedded:                      driverOpts.Embedded,
 		hooks:                         driverOpts.Hooks,
 	}
@@ -587,7 +594,6 @@ func (m *mockCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework)
 	// Create secondary namespace which will be used for creating driver
 	m.driverNamespace = utils.CreateDriverNamespace(ctx, f)
 	driverns := m.driverNamespace.Name
-	testns := f.Namespace.Name
 
 	if m.embedded {
 		ginkgo.By("deploying csi mock proxy")
@@ -621,12 +627,14 @@ func (m *mockCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework)
 		// for cleanup callbacks.
 		ctx, cancel := context.WithCancel(context.Background())
 		serviceConfig := mockservice.Config{
-			DisableAttach:            !m.attachable,
-			DriverName:               "csi-mock-" + f.UniqueName,
-			AttachLimit:              int64(m.attachLimit),
-			NodeExpansionRequired:    m.enableNodeExpansion,
-			VolumeMountGroupRequired: m.enableVolumeMountGroup,
-			EnableTopology:           m.enableTopology,
+			DisableAttach:               !m.attachable,
+			DriverName:                  "csi-mock-" + f.UniqueName,
+			AttachLimit:                 int64(m.attachLimit),
+			NodeExpansionRequired:       m.enableNodeExpansion,
+			DisableControllerExpansion:  m.disableControllerExpansion,
+			NodeVolumeConditionRequired: m.enableNodeVolumeCondition,
+			VolumeMountGroupRequired:    m.enableVolumeMountGroup,
+			EnableTopology:              m.enableTopology,
 			IO: proxy.PodDirIO{
 				F:             f,
 				Namespace:     m.driverNamespace.Name,
@@ -714,9 +722,6 @@ func (m *mockCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework)
 	if m.enableRecoverExpansionFailure {
 		o.Features["csi-resizer"] = []string{"RecoverVolumeExpansionFailure=true"}
 	}
-	if m.enableHonorPVReclaimPolicy {
-		o.Features["csi-provisioner"] = append(o.Features["csi-provisioner"], fmt.Sprintf("%s=true", features.HonorPVReclaimPolicy))
-	}
 
 	err = utils.CreateFromManifests(ctx, f, m.driverNamespace, func(item interface{}) error {
 		if err := utils.PatchCSIDeployment(config.Framework, o, item); err != nil {
@@ -747,7 +752,6 @@ func (m *mockCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework)
 	driverCleanupFunc := generateDriverCleanupFunc(
 		f,
 		"mock",
-		testns,
 		driverns,
 		cancelLogging)
 
@@ -895,7 +899,7 @@ func (g *gcePDCSIDriver) GetDriverInfo() *storageframework.DriverInfo {
 }
 
 func (g *gcePDCSIDriver) SkipUnsupportedTest(pattern storageframework.TestPattern) {
-	e2eskipper.SkipUnlessProviderIs("gce", "gke")
+	e2eskipper.SkipUnlessProviderIs("gce")
 	if pattern.FsType == "xfs" {
 		e2eskipper.SkipUnlessNodeOSDistroIs("ubuntu", "custom")
 	}
@@ -927,16 +931,10 @@ func (g *gcePDCSIDriver) GetSnapshotClass(ctx context.Context, config *storagefr
 }
 
 func (g *gcePDCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework) *storageframework.PerTestConfig {
-	testns := f.Namespace.Name
 	cfg := &storageframework.PerTestConfig{
 		Driver:    g,
 		Prefix:    "gcepd",
 		Framework: f,
-	}
-
-	if framework.ProviderIs("gke") {
-		framework.Logf("The csi gce-pd driver is automatically installed in GKE. Skipping driver installation.")
-		return cfg
 	}
 
 	// Check if the cluster is already running gce-pd CSI Driver
@@ -985,7 +983,6 @@ func (g *gcePDCSIDriver) PrepareTest(ctx context.Context, f *framework.Framework
 	cleanupFunc := generateDriverCleanupFunc(
 		f,
 		"gce-pd",
-		testns,
 		driverns,
 		cancelLogging)
 	ginkgo.DeferCleanup(cleanupFunc)
@@ -1058,17 +1055,12 @@ func tryFunc(f func()) error {
 
 func generateDriverCleanupFunc(
 	f *framework.Framework,
-	driverName, testns, driverns string,
+	driverName, driverns string,
 	cancelLogging func()) func(ctx context.Context) {
 
 	// Cleanup CSI driver and namespaces. This function needs to be idempotent and can be
 	// concurrently called from defer (or AfterEach) and AfterSuite action hooks.
 	cleanupFunc := func(ctx context.Context) {
-		ginkgo.By(fmt.Sprintf("deleting the test namespace: %s", testns))
-		// Delete the primary namespace but it's okay to fail here because this namespace will
-		// also be deleted by framework.Aftereach hook
-		_ = tryFunc(func() { f.DeleteNamespace(ctx, testns) })
-
 		ginkgo.By(fmt.Sprintf("uninstalling csi %s driver", driverName))
 		_ = tryFunc(cancelLogging)
 

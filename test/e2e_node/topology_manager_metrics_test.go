@@ -83,12 +83,17 @@ var _ = SIGDescribe("Topology Manager Metrics", framework.WithSerial(), feature.
 			// being [Serial], we can also assume noone else but us is running pods.
 			ginkgo.By("Checking the topologymanager metrics right after the kubelet restart, with no pods running")
 
+			idFn := makeCustomPairID("scope", "boundary")
 			matchResourceMetrics := gstruct.MatchKeys(gstruct.IgnoreExtras, gstruct.Keys{
 				"kubelet_topology_manager_admission_requests_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(0),
 				}),
 				"kubelet_topology_manager_admission_errors_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(0),
+				}),
+				"kubelet_container_aligned_compute_resources_failure_count": gstruct.MatchElements(idFn, gstruct.IgnoreExtras, gstruct.Elements{
+					"container::numa_node": timelessSample(0),
+					"pod::numa_node":       timelessSample(0),
 				}),
 				"kubelet_topology_manager_admission_duration_ms_count": gstruct.MatchElements(nodeID, gstruct.IgnoreExtras, gstruct.Elements{
 					"": timelessSample(0),
@@ -109,12 +114,17 @@ var _ = SIGDescribe("Topology Manager Metrics", framework.WithSerial(), feature.
 			// being [Serial], we can also assume noone else but us is running pods.
 			ginkgo.By("Checking the topologymanager metrics right after the kubelet restart, with pod failed to admit")
 
+			idFn := makeCustomPairID("scope", "boundary")
 			matchResourceMetrics := gstruct.MatchKeys(gstruct.IgnoreExtras, gstruct.Keys{
 				"kubelet_topology_manager_admission_requests_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(1),
 				}),
 				"kubelet_topology_manager_admission_errors_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(1),
+				}),
+				"kubelet_container_aligned_compute_resources_failure_count": gstruct.MatchElements(idFn, gstruct.IgnoreExtras, gstruct.Elements{
+					"container::numa_node": timelessSample(0),
+					"pod::numa_node":       timelessSample(1),
 				}),
 				"kubelet_topology_manager_admission_duration_ms_count": gstruct.MatchElements(nodeID, gstruct.IgnoreExtras, gstruct.Elements{
 					"": checkMetricValueGreaterThan(0),
@@ -135,12 +145,17 @@ var _ = SIGDescribe("Topology Manager Metrics", framework.WithSerial(), feature.
 			// being [Serial], we can also assume noone else but us is running pods.
 			ginkgo.By("Checking the topologymanager metrics right after the kubelet restart, with pod should be admitted")
 
+			idFn := makeCustomPairID("scope", "boundary")
 			matchResourceMetrics := gstruct.MatchKeys(gstruct.IgnoreExtras, gstruct.Keys{
 				"kubelet_topology_manager_admission_requests_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(1),
 				}),
 				"kubelet_topology_manager_admission_errors_total": gstruct.MatchAllElements(nodeID, gstruct.Elements{
 					"": timelessSample(0),
+				}),
+				"kubelet_container_aligned_compute_resources_failure_count": gstruct.MatchElements(idFn, gstruct.IgnoreExtras, gstruct.Elements{
+					"container::numa_node": timelessSample(0),
+					"pod::numa_node":       timelessSample(0),
 				}),
 				"kubelet_topology_manager_admission_duration_ms_count": gstruct.MatchElements(nodeID, gstruct.IgnoreExtras, gstruct.Elements{
 					"": checkMetricValueGreaterThan(0),
@@ -151,6 +166,32 @@ var _ = SIGDescribe("Topology Manager Metrics", framework.WithSerial(), feature.
 			gomega.Eventually(ctx, getKubeletMetrics, 2*time.Minute, 10*time.Second).Should(matchResourceMetrics)
 			ginkgo.By("Ensuring the metrics match the expectations a few more times")
 			gomega.Consistently(ctx, getKubeletMetrics, 2*time.Minute, 10*time.Second).Should(matchResourceMetrics)
+		})
+
+		ginkgo.It("[alignment] should return updated alignment counters when pod successfully run", func(ctx context.Context) {
+			ginkgo.By("Creating the test pod")
+			testPod = e2epod.NewPodClient(f).Create(ctx, makeGuaranteedCPUExclusiveSleeperPod("count-align-numa-ok", cpusNumPerNUMA))
+
+			// we updated the kubelet config in BeforeEach, so we can assume we start fresh.
+			// being [Serial], we can also assume noone else but us is running pods.
+			ginkgo.By("Checking the cpumanager metrics right after the kubelet restart, with pod should be admitted")
+
+			idFn := makeCustomPairID("scope", "boundary")
+			matchAlignmentMetrics := gstruct.MatchKeys(gstruct.IgnoreExtras, gstruct.Keys{
+				"kubelet_container_aligned_compute_resources_count": gstruct.MatchAllElements(idFn, gstruct.Elements{
+					"container::numa_node": timelessSample(0),
+					"pod::numa_node":       timelessSample(1),
+				}),
+				"kubelet_container_aligned_compute_resources_failure_count": gstruct.MatchElements(idFn, gstruct.IgnoreExtras, gstruct.Elements{
+					"container::numa_node": timelessSample(0),
+					"pod::numa_node":       timelessSample(0),
+				}),
+			})
+
+			ginkgo.By("Giving the Kubelet time to update the alignment metrics")
+			gomega.Eventually(ctx, getKubeletMetrics, 1*time.Minute, 15*time.Second).Should(matchAlignmentMetrics)
+			ginkgo.By("Ensuring the metrics match the expectations about alignment metrics a few more times")
+			gomega.Consistently(ctx, getKubeletMetrics, 1*time.Minute, 15*time.Second).Should(matchAlignmentMetrics)
 		})
 	})
 })

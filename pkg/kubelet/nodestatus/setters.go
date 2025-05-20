@@ -23,6 +23,7 @@ import (
 	"net"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
 	cadvisorapiv1 "github.com/google/cadvisor/info/v1"
@@ -31,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/errors"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	cloudprovider "k8s.io/cloud-provider"
 	cloudproviderapi "k8s.io/cloud-provider/api"
@@ -44,6 +44,7 @@ import (
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	netutils "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	"k8s.io/klog/v2"
 )
@@ -58,6 +59,9 @@ const (
 // Setters may partially mutate the node before returning an error.
 type Setter func(ctx context.Context, node *v1.Node) error
 
+// Only emit one reboot event
+var rebootEvent sync.Once
+
 // NodeAddress returns a Setter that updates address-related information on the node.
 func NodeAddress(nodeIPs []net.IP, // typically Kubelet.nodeIPs
 	validateNodeIPFunc func(net.IP) error, // typically Kubelet.nodeIPValidator
@@ -66,6 +70,7 @@ func NodeAddress(nodeIPs []net.IP, // typically Kubelet.nodeIPs
 	externalCloudProvider bool, // typically Kubelet.externalCloudProvider
 	cloud cloudprovider.Interface, // typically Kubelet.cloud
 	nodeAddressesFunc func() ([]v1.NodeAddress, error), // typically Kubelet.cloudResourceSyncManager.NodeAddresses
+	resolveAddressFunc func(net.IP) (net.IP, error), // typically k8s.io/apimachinery/pkg/util/net.ResolveBindAddress
 ) Setter {
 	var nodeIP, secondaryNodeIP net.IP
 	if len(nodeIPs) > 0 {
@@ -129,12 +134,15 @@ func NodeAddress(nodeIPs []net.IP, // typically Kubelet.nodeIPs
 			if len(node.Status.Addresses) > 0 {
 				return nil
 			}
-			// If nodeIPs are not specified wait for the external cloud-provider to set the node addresses.
+			// If nodeIPs are not set wait for the external cloud-provider to set the node addresses.
+			// If the nodeIP is the unspecified address 0.0.0.0 or ::, then use the IP of the default gateway of
+			// the corresponding IP family to bootstrap the node until the out-of-tree provider overrides it later.
+			// xref: https://github.com/kubernetes/kubernetes/issues/125348
 			// Otherwise uses them on the assumption that the installer/administrator has the previous knowledge
 			// required to ensure the external cloud provider will use the same addresses to avoid the issues explained
 			// in https://github.com/kubernetes/kubernetes/issues/120720.
 			// We are already hinting the external cloud provider via the annotation AnnotationAlphaProvidedIPAddr.
-			if !nodeIPSpecified {
+			if nodeIP == nil {
 				node.Status.Addresses = []v1.NodeAddress{
 					{Type: v1.NodeHostName, Address: hostname},
 				}
@@ -222,7 +230,7 @@ func NodeAddress(nodeIPs []net.IP, // typically Kubelet.nodeIPs
 				}
 
 				if ipAddr == nil {
-					ipAddr, err = utilnet.ResolveBindAddress(nodeIP)
+					ipAddr, err = resolveAddressFunc(nodeIP)
 				}
 			}
 
@@ -247,6 +255,7 @@ func hasAddressType(addresses []v1.NodeAddress, addressType v1.NodeAddressType) 
 	}
 	return false
 }
+
 func hasAddressValue(addresses []v1.NodeAddress, addressValue string) bool {
 	for _, address := range addresses {
 		if address.Address == addressValue {
@@ -308,8 +317,12 @@ func MachineInfo(nodeName string,
 				node.Status.NodeInfo.BootID != info.BootID {
 				// TODO: This requires a transaction, either both node status is updated
 				// and event is recorded or neither should happen, see issue #6055.
-				recordEventFunc(v1.EventTypeWarning, events.NodeRebooted,
-					fmt.Sprintf("Node %s has been rebooted, boot id: %s", nodeName, info.BootID))
+				//
+				// Only emit one reboot event. recordEventFunc queues events and can emit many superfluous reboot events
+				rebootEvent.Do(func() {
+					recordEventFunc(v1.EventTypeWarning, events.NodeRebooted,
+						fmt.Sprintf("Node %s has been rebooted, boot id: %s", nodeName, info.BootID))
+				})
 			}
 			node.Status.NodeInfo.BootID = info.BootID
 
@@ -321,7 +334,6 @@ func MachineInfo(nodeName string,
 					node.Status.Capacity[v1.ResourceEphemeralStorage] = v
 				}
 			}
-			//}
 
 			devicePluginCapacity, devicePluginAllocatable, removedDevicePlugins = devicePluginResourceCapacityFunc()
 			for k, v := range devicePluginCapacity {
@@ -342,6 +354,12 @@ func MachineInfo(nodeName string,
 				// resources and the cluster-level resources, which are absent in
 				// node status.
 				node.Status.Capacity[v1.ResourceName(removedResource)] = *resource.NewQuantity(int64(0), resource.DecimalSI)
+			}
+
+			if utilfeature.DefaultFeatureGate.Enabled(features.NodeSwap) && info.SwapCapacity != 0 {
+				node.Status.NodeInfo.Swap = &v1.NodeSwapStatus{
+					Capacity: ptr.To(int64(info.SwapCapacity)),
+				}
 			}
 		}
 

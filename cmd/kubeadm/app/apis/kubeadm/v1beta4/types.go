@@ -371,7 +371,7 @@ type JoinConfiguration struct {
 	NodeRegistration NodeRegistrationOptions `json:"nodeRegistration,omitempty"`
 
 	// CACertPath is the path to the SSL certificate authority used to
-	// secure comunications between node and control-plane.
+	// secure communications between node and control-plane.
 	// Defaults to "/etc/kubernetes/pki/ca.crt".
 	// +optional
 	CACertPath string `json:"caCertPath,omitempty"`
@@ -748,6 +748,11 @@ type UpgradePlanConfiguration struct {
 	// DryRun tells if the dry run mode is enabled, don't apply any change if it is and just output what would be done.
 	// +optional
 	DryRun *bool `json:"dryRun,omitempty"`
+
+	// EtcdUpgrade instructs kubeadm to execute etcd upgrade during upgrades.
+	// Defaults to true.
+	// +optional
+	EtcdUpgrade *bool `json:"etcdUpgrade,omitempty"`
 
 	// IgnorePreflightErrors provides a slice of pre-flight errors to be ignored during the upgrade process, e.g. 'IsPrivilegedUser,Swap'.
 	// Value 'all' ignores errors from all checks.

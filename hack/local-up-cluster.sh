@@ -51,19 +51,15 @@ CGROUP_DRIVER=${CGROUP_DRIVER:-""}
 CGROUP_ROOT=${CGROUP_ROOT:-""}
 # owner of client certs, default to current user if not specified
 USER=${USER:-$(whoami)}
-# if true, limited swap is being used instead of unlimited swap (default)
+# if true, limited swap is being used instead of no swap (default)
 LIMITED_SWAP=${LIMITED_SWAP:-""}
 
 # required for cni installation
 CNI_CONFIG_DIR=${CNI_CONFIG_DIR:-/etc/cni/net.d}
-CNI_PLUGINS_VERSION=${CNI_PLUGINS_VERSION:-"v1.5.0"}
+CNI_PLUGINS_VERSION=${CNI_PLUGINS_VERSION:-"v1.6.2"}
 # The arch of the CNI binary, if not set, will be fetched based on the value of `uname -m`
 CNI_TARGETARCH=${CNI_TARGETARCH:-""}
 CNI_PLUGINS_URL="https://github.com/containernetworking/plugins/releases/download"
-CNI_PLUGINS_AMD64_SHA256SUM=${CNI_PLUGINS_AMD64_SHA256SUM:-"57a18478422cb321370e30a5ee6ce026321289cd9c94353ca697dddd7714f1a5"}
-CNI_PLUGINS_ARM64_SHA256SUM=${CNI_PLUGINS_ARM64_SHA256SUM:-"ab38507efe50c34bc2242a25c5783c19fdfe0376c65a2a91d48174d4f39f1fc2"}
-CNI_PLUGINS_PPC64LE_SHA256SUM=${CNI_PLUGINS_PPC64LE_SHA256SUM:-"5eea6e7033a337fd98df00fa8a72a8ca8d2d2c69f6637555828515de94158cab"}
-CNI_PLUGINS_S390X_SHA256SUM=${CNI_PLUGINS_S390X_SHA256SUM:-"3d1b56d8b357ee593866cd9342a61fc797852da9ff75ae5ed7b5de125a30b253"}
 
 # enables testing eviction scenarios locally.
 EVICTION_HARD=${EVICTION_HARD:-"imagefs.available<15%,memory.available<100Mi,nodefs.available<10%,nodefs.inodesFree<5%"}
@@ -94,9 +90,12 @@ CLOUD_PROVIDER=${CLOUD_PROVIDER:-""}
 CLOUD_CONFIG=${CLOUD_CONFIG:-""}
 KUBELET_PROVIDER_ID=${KUBELET_PROVIDER_ID:-"$(hostname)"}
 FEATURE_GATES=${FEATURE_GATES:-"AllAlpha=false"}
+EMULATED_VERSION=${EMULATED_VERSION:+kube=$EMULATED_VERSION}
+TOPOLOGY_MANAGER_POLICY=${TOPOLOGY_MANAGER_POLICY:-""}
 CPUMANAGER_POLICY=${CPUMANAGER_POLICY:-""}
 CPUMANAGER_RECONCILE_PERIOD=${CPUMANAGER_RECONCILE_PERIOD:-""}
 CPUMANAGER_POLICY_OPTIONS=${CPUMANAGER_POLICY_OPTIONS:-""}
+LEADER_ELECT=${LEADER_ELECT:-false}
 STORAGE_BACKEND=${STORAGE_BACKEND:-"etcd3"}
 STORAGE_MEDIA_TYPE=${STORAGE_MEDIA_TYPE:-"application/vnd.kubernetes.protobuf"}
 # preserve etcd data. you also need to set ETCD_DIR.
@@ -153,6 +152,9 @@ KUBE_CONTROLLERS="${KUBE_CONTROLLERS:-"*"}"
 # Audit policy
 AUDIT_POLICY_FILE=${AUDIT_POLICY_FILE:-""}
 
+# dmesg command PID for cleanup
+DMESG_PID=${DMESG_PID:-""}
+
 # Stop right away if the build fails
 set -e
 
@@ -165,7 +167,7 @@ function usage {
             echo "Example 1: hack/local-up-cluster.sh -o _output/dockerized/bin/linux/amd64/ (run from docker output)"
             echo "Example 2: hack/local-up-cluster.sh -O (auto-guess the bin path for your platform)"
             echo "Example 3: hack/local-up-cluster.sh (build a local copy of the source)"
-            echo "Example 4: FEATURE_GATES=CPUManagerPolicyOptions=true \\"
+            echo "Example 4: TOPOLOGY_MANAGER_POLICY=\"single-numa-node\" \\"
             echo "           CPUMANAGER_POLICY=\"static\" \\"
             echo "           CPUMANAGER_POLICY_OPTIONS=full-pcpus-only=\"true\" \\"
             echo "           CPUMANAGER_RECONCILE_PERIOD=\"5s\" \\"
@@ -407,6 +409,9 @@ cleanup()
     [[ -n "${ETCD_DIR-}" ]] && kube::etcd::clean_etcd_dir
   fi
 
+  # Cleanup dmesg running in the background
+  [[ -n "${DMESG_PID-}" ]] && sudo kill "$DMESG_PID" 2>/dev/null
+
   exit 0
 }
 
@@ -566,11 +571,6 @@ function start_apiserver {
       generate_certs
     fi
 
-    cloud_config_arg="--cloud-provider=${CLOUD_PROVIDER} --cloud-config=${CLOUD_CONFIG}"
-    if [[ "${EXTERNAL_CLOUD_PROVIDER:-}" == "true" ]]; then
-      cloud_config_arg="--cloud-provider=external"
-    fi
-
     if [[ -z "${EGRESS_SELECTOR_CONFIG_FILE:-}" ]]; then
       cat <<EOF > "${TMP_DIR}"/kube_egress_selector_configuration.yaml
 apiVersion: apiserver.k8s.io/v1beta1
@@ -603,7 +603,6 @@ EOF
     APISERVER_LOG=${LOG_DIR}/kube-apiserver.log
     # shellcheck disable=SC2086
     ${CONTROLPLANE_SUDO} "${GO_OUT}/kube-apiserver" "${authorizer_args[@]}" "${priv_arg}" ${runtime_config} \
-      ${cloud_config_arg} \
       "${advertise_address}" \
       "${node_port_range}" \
       --v="${LOG_LEVEL}" \
@@ -632,6 +631,7 @@ EOF
       --etcd-servers="http://${ETCD_HOST}:${ETCD_PORT}" \
       --service-cluster-ip-range="${SERVICE_CLUSTER_IP_RANGE}" \
       --feature-gates="${FEATURE_GATES}" \
+      --emulated-version="${EMULATED_VERSION}" \
       --external-hostname="${EXTERNAL_HOSTNAME}" \
       --requestheader-username-headers=X-Remote-User \
       --requestheader-group-headers=X-Remote-Group \
@@ -692,13 +692,14 @@ function start_controller_manager {
       --enable-hostpath-provisioner="${ENABLE_HOSTPATH_PROVISIONER}" \
       --pvclaimbinder-sync-period="${CLAIM_BINDER_SYNC_PERIOD}" \
       --feature-gates="${FEATURE_GATES}" \
+      --emulated-version="${EMULATED_VERSION}" \
       "${cloud_config_arg[@]}" \
       --authentication-kubeconfig "${CERT_DIR}"/controller.kubeconfig \
       --authorization-kubeconfig "${CERT_DIR}"/controller.kubeconfig \
       --kubeconfig "${CERT_DIR}"/controller.kubeconfig \
       --use-service-account-credentials \
       --controllers="${KUBE_CONTROLLERS}" \
-      --leader-elect=false \
+      --leader-elect="${LEADER_ELECT}" \
       --cert-dir="${CERT_DIR}" \
       --master="https://${API_HOST}:${API_SECURE_PORT}" >"${CTLRMGR_LOG}" 2>&1 &
     CTLRMGR_PID=$!
@@ -726,7 +727,7 @@ function start_cloud_controller_manager {
       --configure-cloud-routes="${CONFIGURE_CLOUD_ROUTES}" \
       --kubeconfig "${CERT_DIR}"/controller.kubeconfig \
       --use-service-account-credentials \
-      --leader-elect=false \
+      --leader-elect="${LEADER_ELECT}" \
       --master="https://${API_HOST}:${API_SECURE_PORT}" >"${CLOUD_CTLRMGR_LOG}" 2>&1 &
     export CLOUD_CTLRMGR_PID=$!
 }
@@ -799,12 +800,17 @@ function wait_coredns_available(){
     exit 1
   fi
 
-  # bump log level
-  echo "6" | sudo tee /proc/sys/kernel/printk
+  if [[ "${ENABLE_DAEMON}" = false ]]; then
+    # bump log level
+    echo "6" | sudo tee /proc/sys/kernel/printk
 
-  # loop through and grab all things in dmesg
-  dmesg > "${LOG_DIR}/dmesg.log"
-  dmesg -w --human >> "${LOG_DIR}/dmesg.log" &
+    # loop through and grab all things in dmesg
+    # shellcheck disable=SC2024
+    sudo dmesg > "${LOG_DIR}/dmesg.log"
+    # shellcheck disable=SC2024
+    sudo dmesg -w --human >> "${LOG_DIR}/dmesg.log" &
+    DMESG_PID=$!
+  fi
 }
 
 function start_kubelet {
@@ -940,6 +946,11 @@ EOF
         parse_feature_gates "${FEATURE_GATES}"
       fi
 
+      # topology maanager policy
+      if [[ -n ${TOPOLOGY_MANAGER_POLICY} ]]; then
+        echo "topologyManagerPolicy: \"${TOPOLOGY_MANAGER_POLICY}\""
+      fi
+
       # cpumanager policy
       if [[ -n ${CPUMANAGER_POLICY} ]]; then
         echo "cpuManagerPolicy: \"${CPUMANAGER_POLICY}\""
@@ -1019,12 +1030,13 @@ kind: KubeSchedulerConfiguration
 clientConnection:
   kubeconfig: ${CERT_DIR}/scheduler.kubeconfig
 leaderElection:
-  leaderElect: false
+  leaderElect: ${LEADER_ELECT}
 EOF
     ${CONTROLPLANE_SUDO} "${GO_OUT}/kube-scheduler" \
       --v="${LOG_LEVEL}" \
       --config="${TMP_DIR}"/kube-scheduler.yaml \
       --feature-gates="${FEATURE_GATES}" \
+      --emulated-version="${EMULATED_VERSION}" \
       --authentication-kubeconfig "${CERT_DIR}"/scheduler.kubeconfig \
       --authorization-kubeconfig "${CERT_DIR}"/scheduler.kubeconfig \
       --master="https://${API_HOST}:${API_SECURE_PORT}" >"${SCHEDULER_LOG}" 2>&1 &
@@ -1416,7 +1428,9 @@ if [[ "${START_MODE}" != "kubeletonly" ]]; then
         ;;
       Linux)
         start_kubeproxy
-        wait_coredns_available
+        if [[ "${ENABLE_CLUSTER_DNS}" = true ]]; then
+          wait_coredns_available
+        fi
         ;;
       *)
         print_color "Unsupported host OS.  Must be Linux or Mac OS X, kube-proxy aborted."

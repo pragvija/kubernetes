@@ -20,14 +20,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp" //nolint:depguard
 )
 
 type Unwanted struct {
@@ -275,7 +274,7 @@ func main() {
 		}
 	}
 
-	vendorModulesTxt, err := ioutil.ReadFile("vendor/modules.txt")
+	vendorModulesTxt, err := os.ReadFile("vendor/modules.txt")
 	if err != nil {
 		log.Fatal(err)
 	}

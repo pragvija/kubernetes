@@ -40,6 +40,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	cloudprovider "k8s.io/cloud-provider"
 	fakecloud "k8s.io/cloud-provider/fake"
+	"k8s.io/component-base/featuregate"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/version"
 	"k8s.io/kubernetes/pkg/features"
@@ -49,6 +50,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	"k8s.io/kubernetes/pkg/kubelet/util/sliceutils"
 	netutils "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -63,12 +65,14 @@ func TestNodeAddress(t *testing.T) {
 		cloudProviderExternal
 		cloudProviderNone
 	)
+
 	existingNodeAddress := v1.NodeAddress{Address: "10.1.1.2"}
 	cases := []struct {
 		name                           string
 		hostnameOverride               bool
 		nodeIP                         net.IP
 		secondaryNodeIP                net.IP
+		resolvedIP                     net.IP
 		cloudProviderType              cloudProviderType
 		nodeAddresses                  []v1.NodeAddress
 		expectedAddresses              []v1.NodeAddress
@@ -234,8 +238,110 @@ func TestNodeAddress(t *testing.T) {
 			shouldError: false,
 		},
 		{
-			name:              "cloud provider is external and nodeIP unspecified",
+			name:              "no cloud provider and nodeIP IPv4 unspecified",
+			nodeIP:            netutils.ParseIPSloppy("0.0.0.0"),
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderNone,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "10.0.0.2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "no cloud provider and nodeIP IPv6 unspecified",
 			nodeIP:            netutils.ParseIPSloppy("::"),
+			resolvedIP:        netutils.ParseIPSloppy("2001:db2::2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderNone,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "2001:db2::2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "legacy cloud provider and nodeIP IPv4 unspecified",
+			nodeIP:            netutils.ParseIPSloppy("0.0.0.0"),
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderLegacy,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: true,
+		},
+		{
+			name:              "legacy cloud provider and nodeIP IPv6 unspecified",
+			nodeIP:            netutils.ParseIPSloppy("::"),
+			resolvedIP:        netutils.ParseIPSloppy("2001:db2::2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderLegacy,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: true,
+		},
+		{
+			name:              "cloud provider is external and nodeIP IPv4 unspecified",
+			nodeIP:            netutils.ParseIPSloppy("0.0.0.0"),
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderExternal,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "10.0.0.2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "cloud provider is external and nodeIP IPv6 unspecified",
+			nodeIP:            netutils.ParseIPSloppy("::"),
+			resolvedIP:        netutils.ParseIPSloppy("2001:db2::2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderExternal,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "2001:db2::2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "no cloud provider and no nodeIP resolve IPv4",
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderNone,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "10.0.0.2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "no cloud provider and no nodeIP resolve IPv6",
+			resolvedIP:        netutils.ParseIPSloppy("2001:db2::2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderNone,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeInternalIP, Address: "2001:db2::2"},
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: false,
+		},
+		{
+			name:              "legacy cloud provider and no nodeIP",
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
+			nodeAddresses:     []v1.NodeAddress{},
+			cloudProviderType: cloudProviderLegacy,
+			expectedAddresses: []v1.NodeAddress{
+				{Type: v1.NodeHostName, Address: testKubeletHostname},
+			},
+			shouldError: true,
+		},
+		{
+			name:              "cloud provider is external and no nodeIP resolve IPv4",
+			resolvedIP:        netutils.ParseIPSloppy("10.0.0.2"),
 			nodeAddresses:     []v1.NodeAddress{},
 			cloudProviderType: cloudProviderExternal,
 			expectedAddresses: []v1.NodeAddress{
@@ -244,7 +350,8 @@ func TestNodeAddress(t *testing.T) {
 			shouldError: false,
 		},
 		{
-			name:              "cloud provider is external and no nodeIP",
+			name:              "cloud provider is external and no nodeIP resolve IPv6",
+			resolvedIP:        netutils.ParseIPSloppy("2001:db2::2"),
 			nodeAddresses:     []v1.NodeAddress{},
 			cloudProviderType: cloudProviderExternal,
 			expectedAddresses: []v1.NodeAddress{
@@ -638,6 +745,20 @@ func TestNodeAddress(t *testing.T) {
 				return testCase.nodeAddresses, nil
 			}
 
+			net.DefaultResolver = &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network string, address string) (net.Conn, error) {
+					return nil, fmt.Errorf("error")
+				},
+			}
+			defer func() {
+				net.DefaultResolver = &net.Resolver{}
+			}()
+
+			resolveAddressFunc := func(net.IP) (net.IP, error) {
+				return testCase.resolvedIP, nil
+			}
+
 			// cloud provider is expected to be nil if external provider is set or there is no cloud provider
 			var cloud cloudprovider.Interface
 			if testCase.cloudProviderType == cloudProviderLegacy {
@@ -659,7 +780,9 @@ func TestNodeAddress(t *testing.T) {
 				testCase.hostnameOverride,
 				testCase.cloudProviderType == cloudProviderExternal,
 				cloud,
-				nodeAddressesFunc)
+				nodeAddressesFunc,
+				resolveAddressFunc,
+			)
 
 			// call setter on existing node
 			err := setter(ctx, existingNode)
@@ -739,6 +862,9 @@ func TestNodeAddress_NoCloudProvider(t *testing.T) {
 			nodeAddressesFunc := func() ([]v1.NodeAddress, error) {
 				return nil, fmt.Errorf("not reached")
 			}
+			resolvedAddressesFunc := func(net.IP) (net.IP, error) {
+				return nil, fmt.Errorf("not reached")
+			}
 
 			// construct setter
 			setter := NodeAddress(testCase.nodeIPs,
@@ -747,7 +873,8 @@ func TestNodeAddress_NoCloudProvider(t *testing.T) {
 				false, // hostnameOverridden
 				false, // externalCloudProvider
 				nil,   // cloud
-				nodeAddressesFunc)
+				nodeAddressesFunc,
+				resolvedAddressesFunc)
 
 			// call setter on existing node
 			err := setter(ctx, existingNode)
@@ -786,6 +913,7 @@ func TestMachineInfo(t *testing.T) {
 		expectNode                           *v1.Node
 		expectEvents                         []testEvent
 		disableLocalStorageCapacityIsolation bool
+		featureGateDependencies              []featuregate.Feature
 	}{
 		{
 			desc:    "machine identifiers, basic capacity and allocatable",
@@ -1205,9 +1333,48 @@ func TestMachineInfo(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc: "with swap info",
+			node: &v1.Node{},
+			machineInfo: &cadvisorapiv1.MachineInfo{
+				SwapCapacity: uint64(20 * 1024 * 1024 * 1024),
+			},
+			expectNode: &v1.Node{
+				Status: v1.NodeStatus{
+					NodeInfo: v1.NodeSystemInfo{
+						Swap: &v1.NodeSwapStatus{
+							Capacity: ptr.To(int64(20 * 1024 * 1024 * 1024)),
+						},
+					},
+					Capacity: v1.ResourceList{
+						v1.ResourceCPU:    *resource.NewMilliQuantity(0, resource.DecimalSI),
+						v1.ResourceMemory: *resource.NewQuantity(0, resource.BinarySI),
+						v1.ResourcePods:   *resource.NewQuantity(0, resource.DecimalSI),
+					},
+					Allocatable: v1.ResourceList{
+						v1.ResourceCPU:    *resource.NewMilliQuantity(0, resource.DecimalSI),
+						v1.ResourceMemory: *resource.NewQuantity(0, resource.BinarySI),
+						v1.ResourcePods:   *resource.NewQuantity(0, resource.DecimalSI),
+					},
+				},
+			},
+			featureGateDependencies: []featuregate.Feature{features.NodeSwap},
+		},
 	}
 
 	for _, tc := range cases {
+		featureGatesMissing := false
+		for _, featureGateDependency := range tc.featureGateDependencies {
+			if !utilfeature.DefaultFeatureGate.Enabled(featureGateDependency) {
+				featureGatesMissing = true
+				break
+			}
+		}
+
+		if featureGatesMissing {
+			continue
+		}
+
 		t.Run(tc.desc, func(t *testing.T) {
 			ctx := context.Background()
 			machineInfoFunc := func() (*cadvisorapiv1.MachineInfo, error) {

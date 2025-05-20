@@ -21,11 +21,9 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 
-	resourcehelper "k8s.io/kubernetes/pkg/api/v1/resource"
-	"k8s.io/kubernetes/pkg/features"
+	resourcehelper "k8s.io/component-helpers/resource"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
@@ -36,7 +34,9 @@ type scorer func(args *config.NodeResourcesFitArgs) *resourceAllocationScorer
 
 // resourceAllocationScorer contains information to calculate resource allocation score.
 type resourceAllocationScorer struct {
-	Name string
+	Name                            string
+	enableInPlacePodVerticalScaling bool
+	enablePodLevelResources         bool
 	// used to decide whether to use Requested or NonZeroRequested for
 	// cpu and memory.
 	useRequested bool
@@ -118,8 +118,11 @@ func (r *resourceAllocationScorer) calculateResourceAllocatableRequest(logger kl
 func (r *resourceAllocationScorer) calculatePodResourceRequest(pod *v1.Pod, resourceName v1.ResourceName) int64 {
 
 	opts := resourcehelper.PodResourcesOptions{
-		InPlacePodVerticalScalingEnabled: utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling),
+		UseStatusResources: r.enableInPlacePodVerticalScaling,
+		// SkipPodLevelResources is set to false when PodLevelResources feature is enabled.
+		SkipPodLevelResources: !r.enablePodLevelResources,
 	}
+
 	if !r.useRequested {
 		opts.NonMissingContainerRequests = v1.ResourceList{
 			v1.ResourceCPU:    *resource.NewMilliQuantity(schedutil.DefaultMilliCPURequest, resource.DecimalSI),
@@ -142,4 +145,13 @@ func (r *resourceAllocationScorer) calculatePodResourceRequestList(pod *v1.Pod, 
 		podRequests[i] = r.calculatePodResourceRequest(pod, v1.ResourceName(resources[i].Name))
 	}
 	return podRequests
+}
+
+func (r *resourceAllocationScorer) isBestEffortPod(podRequests []int64) bool {
+	for _, request := range podRequests {
+		if request != 0 {
+			return false
+		}
+	}
+	return true
 }

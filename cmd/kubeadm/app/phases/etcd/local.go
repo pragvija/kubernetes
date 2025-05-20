@@ -38,6 +38,7 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/features"
 	"k8s.io/kubernetes/cmd/kubeadm/app/images"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
+	dryrunutil "k8s.io/kubernetes/cmd/kubeadm/app/util/dryrun"
 	etcdutil "k8s.io/kubernetes/cmd/kubeadm/app/util/etcd"
 	staticpodutil "k8s.io/kubernetes/cmd/kubeadm/app/util/staticpod"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/users"
@@ -139,25 +140,22 @@ func RemoveStackedEtcdMemberFromCluster(client clientset.Interface, cfg *kubeadm
 // for an additional etcd member that is joining an existing local/stacked etcd cluster.
 // Other members of the etcd cluster will be notified of the joining node in beforehand as well.
 func CreateStackedEtcdStaticPodManifestFile(client clientset.Interface, manifestDir, patchesDir string, nodeName string, cfg *kubeadmapi.ClusterConfiguration, endpoint *kubeadmapi.APIEndpoint, isDryRun bool, certificatesDir string) error {
-	// creates an etcd client that connects to all the local/stacked etcd members
-	klog.V(1).Info("creating etcd client that connects to etcd pods")
-	etcdClient, err := etcdutil.NewFromCluster(client, certificatesDir)
-	if err != nil {
-		return err
-	}
-
 	etcdPeerAddress := etcdutil.GetPeerURL(endpoint)
 
 	var cluster []etcdutil.Member
+	var etcdClient *etcdutil.Client
+	var err error
 	if isDryRun {
 		fmt.Printf("[etcd] Would add etcd member: %s\n", etcdPeerAddress)
 	} else {
-		klog.V(1).Infof("[etcd] Adding etcd member: %s", etcdPeerAddress)
-		if features.Enabled(cfg.FeatureGates, features.EtcdLearnerMode) {
-			cluster, err = etcdClient.AddMemberAsLearner(nodeName, etcdPeerAddress)
-		} else {
-			cluster, err = etcdClient.AddMember(nodeName, etcdPeerAddress)
+		// Creates an etcd client that connects to all the local/stacked etcd members.
+		klog.V(1).Info("creating etcd client that connects to etcd pods")
+		etcdClient, err = etcdutil.NewFromCluster(client, certificatesDir)
+		if err != nil {
+			return err
 		}
+		klog.V(1).Infof("[etcd] Adding etcd member: %s", etcdPeerAddress)
+		cluster, err = etcdClient.AddMemberAsLearner(nodeName, etcdPeerAddress)
 		if err != nil {
 			return err
 		}
@@ -176,15 +174,13 @@ func CreateStackedEtcdStaticPodManifestFile(client clientset.Interface, manifest
 		return nil
 	}
 
-	if features.Enabled(cfg.FeatureGates, features.EtcdLearnerMode) {
-		learnerID, err := etcdClient.GetMemberID(etcdPeerAddress)
-		if err != nil {
-			return err
-		}
-		err = etcdClient.MemberPromote(learnerID)
-		if err != nil {
-			return err
-		}
+	learnerID, err := etcdClient.GetMemberID(etcdPeerAddress)
+	if err != nil {
+		return err
+	}
+	err = etcdClient.MemberPromote(learnerID)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("[etcd] Waiting for the new etcd member to join the cluster. This can take up to %v\n", etcdHealthyCheckInterval*etcdHealthyCheckRetries)
@@ -323,5 +319,11 @@ func prepareAndWriteEtcdStaticPod(manifestDir string, patchesDir string, cfg *ku
 		return err
 	}
 
+	// If dry-running, print the static etcd pod manifest file.
+	if isDryRun {
+		realPath := kubeadmconstants.GetStaticPodFilepath(kubeadmconstants.Etcd, manifestDir)
+		outputPath := kubeadmconstants.GetStaticPodFilepath(kubeadmconstants.Etcd, kubeadmconstants.GetStaticPodDirectory())
+		return dryrunutil.PrintDryRunFiles([]dryrunutil.FileToPrint{dryrunutil.NewFileToPrint(realPath, outputPath)}, os.Stdout)
+	}
 	return nil
 }

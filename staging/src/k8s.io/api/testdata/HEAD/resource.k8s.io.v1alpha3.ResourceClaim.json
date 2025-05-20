@@ -58,7 +58,40 @@
           ],
           "allocationMode": "allocationModeValue",
           "count": 5,
-          "adminAccess": true
+          "adminAccess": true,
+          "firstAvailable": [
+            {
+              "name": "nameValue",
+              "deviceClassName": "deviceClassNameValue",
+              "selectors": [
+                {
+                  "cel": {
+                    "expression": "expressionValue"
+                  }
+                }
+              ],
+              "allocationMode": "allocationModeValue",
+              "count": 5,
+              "tolerations": [
+                {
+                  "key": "keyValue",
+                  "operator": "operatorValue",
+                  "value": "valueValue",
+                  "effect": "effectValue",
+                  "tolerationSeconds": 5
+                }
+              ]
+            }
+          ],
+          "tolerations": [
+            {
+              "key": "keyValue",
+              "operator": "operatorValue",
+              "value": "valueValue",
+              "effect": "effectValue",
+              "tolerationSeconds": 5
+            }
+          ]
         }
       ],
       "constraints": [
@@ -89,8 +122,7 @@
           }
         }
       ]
-    },
-    "controller": "controllerValue"
+    }
   },
   "status": {
     "allocation": {
@@ -100,7 +132,17 @@
             "request": "requestValue",
             "driver": "driverValue",
             "pool": "poolValue",
-            "device": "deviceValue"
+            "device": "deviceValue",
+            "adminAccess": true,
+            "tolerations": [
+              {
+                "key": "keyValue",
+                "operator": "operatorValue",
+                "value": "valueValue",
+                "effect": "effectValue",
+                "tolerationSeconds": 5
+              }
+            ]
           }
         ],
         "config": [
@@ -148,8 +190,7 @@
             ]
           }
         ]
-      },
-      "controller": "controllerValue"
+      }
     },
     "reservedFor": [
       {
@@ -159,6 +200,39 @@
         "uid": "uidValue"
       }
     ],
-    "deallocationRequested": true
+    "devices": [
+      {
+        "driver": "driverValue",
+        "pool": "poolValue",
+        "device": "deviceValue",
+        "conditions": [
+          {
+            "type": "typeValue",
+            "status": "statusValue",
+            "observedGeneration": 3,
+            "lastTransitionTime": "2004-01-01T01:01:01Z",
+            "reason": "reasonValue",
+            "message": "messageValue"
+          }
+        ],
+        "data": {
+          "apiVersion": "example.com/v1",
+          "kind": "CustomType",
+          "spec": {
+            "replicas": 1
+          },
+          "status": {
+            "available": 1
+          }
+        },
+        "networkData": {
+          "interfaceName": "interfaceNameValue",
+          "ips": [
+            "ipsValue"
+          ],
+          "hardwareAddress": "hardwareAddressValue"
+        }
+      }
+    ]
   }
 }

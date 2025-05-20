@@ -85,7 +85,7 @@ func CreateCertificateKey() (string, error) {
 	return hex.EncodeToString(randBytes), nil
 }
 
-// UploadCerts save certs needs to join a new control-plane on kubeadm-certs sercret.
+// UploadCerts save certs needs to join a new control-plane on kubeadm-certs secret.
 func UploadCerts(client clientset.Interface, cfg *kubeadmapi.InitConfiguration, key string) error {
 	fmt.Printf("[upload-certs] Storing the certificates in Secret %q in the %q Namespace\n", kubeadmconstants.KubeadmCertsSecret, metav1.NamespaceSystem)
 	decodedKey, err := hex.DecodeString(key)
@@ -106,7 +106,7 @@ func UploadCerts(client clientset.Interface, cfg *kubeadmapi.InitConfiguration, 
 		return err
 	}
 
-	err = apiclient.CreateOrUpdateSecret(client, &v1.Secret{
+	err = apiclient.CreateOrUpdate(client.CoreV1().Secrets(metav1.NamespaceSystem), &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            kubeadmconstants.KubeadmCertsSecret,
 			Namespace:       metav1.NamespaceSystem,
@@ -122,7 +122,7 @@ func UploadCerts(client clientset.Interface, cfg *kubeadmapi.InitConfiguration, 
 }
 
 func createRBAC(client clientset.Interface) error {
-	err := apiclient.CreateOrUpdateRole(client, &rbac.Role{
+	err := apiclient.CreateOrUpdate(client.RbacV1().Roles(metav1.NamespaceSystem), &rbac.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubeadmconstants.KubeadmCertsClusterRoleName,
 			Namespace: metav1.NamespaceSystem,
@@ -140,7 +140,7 @@ func createRBAC(client clientset.Interface) error {
 		return err
 	}
 
-	return apiclient.CreateOrUpdateRoleBinding(client, &rbac.RoleBinding{
+	return apiclient.CreateOrUpdate(client.RbacV1().RoleBindings(metav1.NamespaceSystem), &rbac.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubeadmconstants.KubeadmCertsClusterRoleName,
 			Namespace: metav1.NamespaceSystem,

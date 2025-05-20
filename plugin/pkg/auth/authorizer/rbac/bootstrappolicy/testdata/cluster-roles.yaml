@@ -852,6 +852,14 @@ items:
     - list
     - watch
   - apiGroups:
+    - storage.k8s.io
+    resources:
+    - volumeattachments
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
     - ""
     resources:
     - namespaces
@@ -906,6 +914,14 @@ items:
     - nodes/metrics
     - nodes/proxy
     - nodes/stats
+    verbs:
+    - '*'
+  - apiGroups:
+    - ""
+    resources:
+    - nodes/configz
+    - nodes/healthz
+    - nodes/pods
     verbs:
     - '*'
 - apiVersion: rbac.authorization.k8s.io/v1
@@ -1191,6 +1207,13 @@ items:
     - create
     - patch
     - update
+  - apiGroups:
+    - networking.k8s.io
+    resources:
+    - servicecidrs
+    verbs:
+    - list
+    - watch
   - apiGroups:
     - discovery.k8s.io
     resources:
